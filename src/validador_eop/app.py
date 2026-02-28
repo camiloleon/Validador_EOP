@@ -124,6 +124,7 @@ def home() -> str:
     thead th { text-align: left; background: #F9FAFB; border: 1px solid #FECACA; padding: 7px 8px; color: #344054; }
     tbody td { background: white; border: 1px solid #FECACA; padding: 6px 8px; }
     .field-error { color: #B42318; font-weight: 600; }
+    .row-context { font-size: 11px; color: #475467; line-height: 1.35; }
     .inline-input { width: 100%; border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; font-size: 12px; }
     select.inline-input { appearance: auto; background: #fff; cursor: pointer; }
     select.inline-input:disabled { background: #F2F4F7; color: #98A2B3; cursor: not-allowed; }
@@ -131,8 +132,19 @@ def home() -> str:
     .note { margin-top: 8px; color: #667085; font-size: 13px; }
     .findings { margin-top: 8px; padding: 10px 12px; border: 1px solid #FECACA; border-radius: 8px; background: #FFFFFF; }
     .findings-title { font-size: 13px; font-weight: 700; color: #912018; margin-bottom: 6px; }
-    .findings-list { margin: 0; padding-left: 18px; color: #7A271A; font-size: 12px; }
-    .findings-list li { margin: 3px 0; }
+    .findings-grid { display: grid; grid-template-columns: 190px repeat(var(--findings-col-count, 1), minmax(220px, 1fr)); gap: 6px; }
+    .findings-cell { border: 1px solid #FECACA; border-radius: 6px; background: #fff; padding: 6px 8px; font-size: 11px; color: #7A271A; }
+    .findings-cell.header { background: #F9FAFB; color: #344054; font-weight: 600; }
+    .findings-cell.rowlabel { background: #F9FAFB; color: #344054; font-weight: 600; }
+    .findings-cell.muted { color: #98A2B3; }
+    .findings-rule { font-weight: 600; color: #B42318; margin-bottom: 2px; }
+    .findings-meta { color: #7A271A; margin-bottom: 4px; }
+    .findings-detail-btn { border: 1px solid #DF3346; background: #FFF1F3; color: #B42318; border-radius: 6px; font-size: 10px; font-weight: 600; padding: 3px 6px; cursor: pointer; }
+    .findings-detail { margin-top: 8px; border: 1px solid #FECACA; border-radius: 6px; background: #F9FAFB; padding: 8px; font-size: 11px; color: #7A271A; }
+    .findings-detail-title { color: #912018; font-weight: 700; margin-bottom: 4px; }
+    .findings-actions { margin-top: 6px; display: flex; gap: 6px; }
+    .findings-action-btn { border: 1px solid #D0D5DD; background: #fff; color: #344054; border-radius: 6px; font-size: 10px; font-weight: 600; padding: 4px 8px; cursor: pointer; }
+    .findings-action-btn.primary { border-color: #DF3346; background: #FFF1F3; color: #B42318; }
   </style>
 </head>
 <body>
@@ -150,11 +162,11 @@ def home() -> str:
 
     <div id=\"step-1\" class=\"card\">
       <div id=\"step1-title\" style=\"font-size: 24px; font-weight: 600;\">Paso 1: Elige la plantilla y carga el archivo</div>
-      <div class=\"subtitle\">El sistema recibe cualquier formato y lo convierte a CSV para validar</div>
+      <div class="subtitle">El sistema recibe cualquier formato y lo convierte a CSV para validar</div>
       <div class=\"template-list\">
-        <div class=\"template-option\" data-template=\"tecnicos\">Plantilla Técnicos (recomendada)</div>
-        <div class=\"template-option\" data-template=\"usuarios\">Plantilla Usuarios</div>
-        <div class=\"template-option\" data-template=\"plan_padrino\">Plantilla Plan Padrino</div>
+          <div class="template-option" data-template="tecnicos" onclick="setTemplate('tecnicos')">Plantilla Técnicos (recomendada)</div>
+          <div class="template-option" data-template="usuarios" onclick="setTemplate('usuarios')">Plantilla Usuarios</div>
+          <div class="template-option" data-template="plan_padrino" onclick="setTemplate('plan_padrino')">Plantilla Plan Padrino</div>
       </div>
       <div id=\"dropzone\" class=\"dropzone\">
         <div class=\"drop-title\">Arrastra y suelta tu archivo aquí</div>
@@ -194,7 +206,8 @@ def home() -> str:
         <div id="manual-overview" class="summary-line"></div>
         <div id="manual-findings" class="findings hidden">
           <div class="findings-title">Resumen de hallazgos</div>
-          <ul id="manual-findings-list" class="findings-list"></ul>
+          <div id="manual-findings-matrix" class="findings-grid"></div>
+          <div id="manual-findings-detail" class="findings-detail hidden"></div>
         </div>
         <div style="margin-top: 8px; font-size: 12px; font-weight: 700; color: #912018;">Opciones de corrección</div>
         <table>
@@ -202,6 +215,7 @@ def home() -> str:
             <tr>
               <th style=\"width: 70px;\">Fila</th>
               <th style=\"width: 150px;\">Campo</th>
+              <th style=\"width: 280px;\">Contexto de registro</th>
               <th style=\"width: 180px;\">Valor actual</th>
               <th>Corrección sugerida / acción</th>
               <th style=\"width: 90px;\">Aplicar</th>
@@ -268,6 +282,8 @@ def home() -> str:
       document.getElementById('step3-title').textContent = `Paso 2: Resultado de validación · Plantilla: ${label}`;
       updateValidateButtonState();
     }
+
+    window.setTemplate = setTemplate;
 
     function setSourceFile(file) {
       state.sourceFile = file;
@@ -378,10 +394,49 @@ def home() -> str:
       renderManualTable();
     }
 
+    function applyPairCorrection(rowNumber, cityValue, baseValue) {
+      const targetRow = rowNumber - 2;
+      if (targetRow < 0 || targetRow >= state.rows.length) return;
+
+      const rowData = state.rows[targetRow];
+      rowData['ciudad'] = cityValue || rowData['ciudad'] || '';
+      rowData['base_operativa'] = baseValue || rowData['base_operativa'] || '';
+      enforceTecnicosRowCorrelation(rowData);
+
+      const cityError = findManualErrorByRowField(rowNumber, 'ciudad');
+      if (cityError) {
+        cityError.proposed = rowData['ciudad'] || cityValue || '';
+        cityError.applied = true;
+      }
+
+      const baseError = findManualErrorByRowField(rowNumber, 'base_operativa');
+      if (baseError) {
+        baseError.proposed = rowData['base_operativa'] || baseValue || '';
+        baseError.applied = true;
+      }
+
+      state.correctedCsv = buildCsv(state.headers, state.rows, state.delimiter);
+      renderManualTable();
+    }
+
     function applyAllCorrections() {
-      state.manualErrors.forEach((_, index) => {
+      const processedPairRows = new Set();
+      state.manualErrors.forEach((item, index) => {
+        if (state.template === 'tecnicos' && isCityBasePairField(item.field)) {
+          if (processedPairRows.has(item.row)) {
+            return;
+          }
+
+          const cityError = findManualErrorByRowField(item.row, 'ciudad');
+          const baseError = findManualErrorByRowField(item.row, 'base_operativa');
+          applyPairCorrection(item.row, cityError?.proposed || '', baseError?.proposed || '');
+          processedPairRows.add(item.row);
+          return;
+        }
+
         applyCorrection(index);
       });
+
       state.correctedCsv = buildCsv(state.headers, state.rows, state.delimiter);
     }
 
@@ -412,6 +467,68 @@ def home() -> str:
         }
       }
       return null;
+    }
+
+    function isCityField(field) {
+      return normalizeFieldKey(field) === 'ciudad';
+    }
+
+    function isBaseField(field) {
+      return normalizeFieldKey(field) === 'base_operativa';
+    }
+
+    function isCityBasePairField(field) {
+      return isCityField(field) || isBaseField(field);
+    }
+
+    function findManualErrorByRowField(rowNumber, normalizedField) {
+      return state.manualErrors.find(
+        (entry) => entry.row === rowNumber && normalizeFieldKey(entry.field) === normalizedField
+      ) || null;
+    }
+
+    function uniqueValues(values) {
+      const result = [];
+      const seen = new Set();
+
+      values.forEach((value) => {
+        const text = String(value || '').trim();
+        if (!text) return;
+        const key = normalizeCatalogValue(text);
+        if (seen.has(key)) return;
+        seen.add(key);
+        result.push(text);
+      });
+
+      return result;
+    }
+
+    function getCityOptionsForRow(rowData) {
+      const catalogCities = getOptionsForField('ciudad');
+      const mapCities = Object.keys(state.correlationMaps?.city_to_base || {});
+      const currentCity = rowData?.['ciudad'] || '';
+      return uniqueValues([...catalogCities, ...mapCities, currentCity]);
+    }
+
+    function getBaseOptionsForCity(cityValue, rowData) {
+      const cityToBase = state.correlationMaps?.city_to_base || {};
+      const directBase = findMappedValue(cityToBase, cityValue);
+      if (directBase) {
+        return uniqueValues([String(directBase), rowData?.['base_operativa'] || '']);
+      }
+
+      const basesFromReverseMap = [];
+      const normalizedCity = normalizeCatalogValue(cityValue);
+      Object.entries(state.correlationMaps?.base_to_cities || {}).forEach(([base, cities]) => {
+        if (!Array.isArray(cities)) return;
+        const hasCity = cities.some((entry) => normalizeCatalogValue(entry) === normalizedCity);
+        if (hasCity) {
+          basesFromReverseMap.push(String(base));
+        }
+      });
+
+      const catalogBases = getOptionsForField('base_operativa');
+      return uniqueValues([...basesFromReverseMap, ...catalogBases, rowData?.['base_operativa'] || '']);
     }
 
     function getCorrelatedOptions(field, rowData) {
@@ -451,14 +568,133 @@ def home() -> str:
       return [];
     }
 
+    function escapeCellHtml(value) {
+      return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    function buildRowContextHtml(rowData, focusField) {
+      if (!rowData || typeof rowData !== 'object') {
+        return '<span class="row-context">Sin contexto adicional</span>';
+      }
+
+      const preferredKeys = [
+        'nombre_completo',
+        'nombre',
+        'tecnico',
+        'usuario',
+        'documento',
+        'cedula',
+        'identificacion',
+        'correo',
+        'email',
+        'telefono',
+        'celular',
+        'cargo',
+        'ciudad',
+        'base_operativa',
+      ];
+
+      const focusedKey = normalizeFieldKey(focusField);
+      const entries = Object.entries(rowData)
+        .map(([key, value]) => ({
+          key,
+          normalized: normalizeFieldKey(key),
+          value: String(value ?? '').trim(),
+        }))
+        .filter((entry) => entry.value)
+        .filter((entry) => !focusedKey || entry.normalized !== focusedKey)
+        .sort((a, b) => {
+          const aPriority = preferredKeys.indexOf(a.normalized);
+          const bPriority = preferredKeys.indexOf(b.normalized);
+          const aScore = aPriority === -1 ? 999 : aPriority;
+          const bScore = bPriority === -1 ? 999 : bPriority;
+          if (aScore !== bScore) return aScore - bScore;
+          return a.key.localeCompare(b.key);
+        })
+        .slice(0, 4);
+
+      if (!entries.length) {
+        return '<span class="row-context">Sin contexto adicional</span>';
+      }
+
+      return `<div class="row-context">${entries
+        .map((entry) => `<div><strong>${escapeCellHtml(entry.key)}:</strong> ${escapeCellHtml(entry.value)}</div>`)
+        .join('')}</div>`;
+    }
+
     function renderManualTable() {
       const body = document.getElementById('manual-table-body');
       body.innerHTML = '';
       const errors = state.manualErrors;
+      const renderedPairRows = new Set();
 
       errors.forEach((item, index) => {
         const targetRow = item.row - 2;
         const rowData = targetRow >= 0 && targetRow < state.rows.length ? state.rows[targetRow] : {};
+
+        if (state.template === 'tecnicos' && isCityBasePairField(item.field)) {
+          if (renderedPairRows.has(item.row)) {
+            return;
+          }
+
+          renderedPairRows.add(item.row);
+          const cityError = findManualErrorByRowField(item.row, 'ciudad');
+          const baseError = findManualErrorByRowField(item.row, 'base_operativa');
+
+          const cityOptions = getCityOptionsForRow(rowData);
+          const preferredCity = String(cityError?.proposed || rowData?.['ciudad'] || '').trim();
+          const selectedCity = cityOptions.includes(preferredCity) ? preferredCity : '';
+
+          const baseOptions = selectedCity ? getBaseOptionsForCity(selectedCity, rowData) : [];
+          const preferredBase = String(baseError?.proposed || rowData?.['base_operativa'] || '').trim();
+          const selectedBase = baseOptions.includes(preferredBase) ? preferredBase : '';
+
+          if (cityError) cityError.proposed = selectedCity;
+          if (baseError) baseError.proposed = selectedBase;
+
+          const cityOptionsHtml = [`<option value="">Selecciona ciudad</option>`, ...cityOptions]
+            .map((option) => {
+              const selected = option === selectedCity ? ' selected' : '';
+              const label = option || 'Selecciona ciudad';
+              return `<option value="${option.replace(/"/g, '&quot;')}"${selected}>${label}</option>`;
+            })
+            .join('');
+
+          const baseOptionsHtml = [`<option value="">${selectedCity ? 'Selecciona base operativa' : 'Selecciona ciudad primero'}</option>`, ...baseOptions]
+            .map((option) => {
+              const selected = option === selectedBase ? ' selected' : '';
+              const label = option || (selectedCity ? 'Selecciona base operativa' : 'Selecciona ciudad primero');
+              return `<option value="${option.replace(/"/g, '&quot;')}"${selected}>${label}</option>`;
+            })
+            .join('');
+
+          const currentCity = rowData?.['ciudad'] || cityError?.current || '';
+          const currentBase = rowData?.['base_operativa'] || baseError?.current || '';
+          const contextHtml = buildRowContextHtml(rowData, '');
+
+          const tr = document.createElement('tr');
+          tr.innerHTML = `
+            <td>${item.row}</td>
+            <td>ciudad + base_operativa</td>
+            <td>${contextHtml}</td>
+            <td class="field-error">${currentCity || '(vacío)'} | ${currentBase || '(vacío)'}</td>
+            <td>
+              <div style="display:flex; flex-direction:column; gap:6px;">
+                <select class="inline-input" data-pair-city="${item.row}">${cityOptionsHtml}</select>
+                <select class="inline-input" data-pair-base="${item.row}" ${selectedCity ? '' : 'disabled'}>${baseOptionsHtml}</select>
+              </div>
+            </td>
+            <td><button class="btn" data-apply-pair="${item.row}" ${selectedCity && selectedBase ? '' : 'disabled'}>Aplicar par</button></td>
+          `;
+          body.appendChild(tr);
+          return;
+        }
+
         const correlatedOptions = getCorrelatedOptions(item.field, rowData);
         const catalogOptions = correlatedOptions.length ? correlatedOptions : getOptionsForField(item.field);
         const hasCatalogOptions = catalogOptions.length > 0;
@@ -477,9 +713,11 @@ def home() -> str:
           .join('');
 
         const tr = document.createElement('tr');
+        const contextHtml = buildRowContextHtml(rowData, item.field);
         tr.innerHTML = `
           <td>${item.row}</td>
           <td>${item.field}</td>
+          <td>${contextHtml}</td>
           <td class="field-error">${item.current || ''}</td>
           <td><select class="inline-input" data-index="${index}" ${hasCatalogOptions ? '' : 'disabled'}>${optionsHtml}</select></td>
           <td><button class="btn" data-apply="${index}" ${hasCatalogOptions ? '' : 'disabled'} onclick="window.__applyCorrection && window.__applyCorrection(${index})">Aplicar</button></td>
@@ -494,19 +732,86 @@ def home() -> str:
         });
       });
 
+      body.querySelectorAll('select[data-pair-city]').forEach((select) => {
+        select.addEventListener('change', (event) => {
+          const rowNumber = Number(event.target.dataset.pairCity);
+          const cityValue = event.target.value;
+          const targetRow = rowNumber - 2;
+          const rowData = targetRow >= 0 && targetRow < state.rows.length ? state.rows[targetRow] : {};
+          const baseSelect = body.querySelector(`select[data-pair-base="${rowNumber}"]`);
+          const baseOptions = getBaseOptionsForCity(cityValue, rowData);
+
+          const cityError = findManualErrorByRowField(rowNumber, 'ciudad');
+          if (cityError) {
+            cityError.proposed = cityValue;
+          }
+
+          if (baseSelect) {
+            const currentBase = baseSelect.value;
+            baseSelect.disabled = !cityValue;
+            baseSelect.innerHTML = [`<option value="">${cityValue ? 'Selecciona base operativa' : 'Selecciona ciudad primero'}</option>`, ...baseOptions]
+              .map((option) => {
+                const label = option || (cityValue ? 'Selecciona base operativa' : 'Selecciona ciudad primero');
+                return `<option value="${option.replace(/"/g, '&quot;')}">${label}</option>`;
+              })
+              .join('');
+            const nextBase = baseOptions.includes(currentBase) ? currentBase : (baseOptions[0] || '');
+            baseSelect.value = nextBase;
+
+            const baseError = findManualErrorByRowField(rowNumber, 'base_operativa');
+            if (baseError) {
+              baseError.proposed = nextBase;
+            }
+
+            const pairButton = body.querySelector(`button[data-apply-pair="${rowNumber}"]`);
+            if (pairButton) {
+              pairButton.disabled = !(cityValue && nextBase);
+            }
+          }
+        });
+      });
+
+      body.querySelectorAll('select[data-pair-base]').forEach((select) => {
+        select.addEventListener('change', (event) => {
+          const rowNumber = Number(event.target.dataset.pairBase);
+          const citySelect = body.querySelector(`select[data-pair-city="${rowNumber}"]`);
+          const baseError = findManualErrorByRowField(rowNumber, 'base_operativa');
+          if (baseError) {
+            baseError.proposed = event.target.value;
+          }
+
+          const pairButton = body.querySelector(`button[data-apply-pair="${rowNumber}"]`);
+          if (pairButton) {
+            pairButton.disabled = !(citySelect?.value && event.target.value);
+          }
+        });
+      });
+
       body.querySelectorAll('button[data-apply]').forEach((button) => {
         button.addEventListener('click', () => applyCorrection(Number(button.dataset.apply)));
       });
 
+      body.querySelectorAll('button[data-apply-pair]').forEach((button) => {
+        button.addEventListener('click', () => {
+          const rowNumber = Number(button.dataset.applyPair);
+          const citySelect = body.querySelector(`select[data-pair-city="${rowNumber}"]`);
+          const baseSelect = body.querySelector(`select[data-pair-base="${rowNumber}"]`);
+          applyPairCorrection(rowNumber, citySelect?.value || '', baseSelect?.value || '');
+        });
+      });
+
       document.getElementById('manual-summary').textContent =
-        `Se muestran ${errors.length} filas de error (una por cada error detectado).`;
+        `Se muestran ${errors.length} filas de error con contexto del registro para facilitar la corrección.`;
     }
 
     function renderManualFindings() {
       const overview = document.getElementById('manual-overview');
       const findingsContainer = document.getElementById('manual-findings');
-      const findingsList = document.getElementById('manual-findings-list');
-      findingsList.innerHTML = '';
+      const findingsMatrix = document.getElementById('manual-findings-matrix');
+      const findingsDetail = document.getElementById('manual-findings-detail');
+      findingsMatrix.innerHTML = '';
+      findingsDetail.innerHTML = '';
+      findingsDetail.classList.add('hidden');
 
       const allIssues = (state.validation?.issues || []).filter(
         (issue) => ['error', 'warning', 'suspicious'].includes(issue.severity) && issue.row > 1
@@ -517,34 +822,165 @@ def home() -> str:
 
       overview.textContent = `Hallazgos detectados: ${allIssues.length} · Errores: ${errors.length} · Advertencias: ${warnings.length} · Sospechosos: ${suspicious.length}`;
 
-      const issues = allIssues;
-      if (!issues.length) {
+      if (!allIssues.length) {
         findingsContainer.classList.add('hidden');
         return;
       }
 
+      function classifyIssue(issue) {
+        const code = String(issue.code || '').toUpperCase();
+        if (code.includes('INCONSISTENT')) return 'Inconsistencia';
+        if (code.includes('INVALID') || code.includes('MISSING')) return 'No parametrizado';
+        if (code.includes('AUTOCORRECTED')) return 'Autocorregido';
+        return 'Otros';
+      }
+
+      function escapeHtml(value) {
+        return String(value || '')
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&#39;');
+      }
+
+      function sanitizeFilename(value) {
+        return String(value || 'detalle')
+          .replace(/[^a-z0-9_.-]+/gi, '_')
+          .replace(/_+/g, '_')
+          .replace(/^_+|_+$/g, '');
+      }
+
+      function downloadRuleDetailCsv(entry) {
+        const csvRows = [['columna', 'codigo', 'mensaje', 'fila']];
+        entry.rows.forEach((rowNumber) => {
+          csvRows.push([entry.field, entry.code, entry.message, String(rowNumber)]);
+        });
+        const content = csvRows
+          .map((row) => row.map((cell) => {
+            const text = String(cell || '');
+            return (text.includes(',') || text.includes('"') || text.includes('\\n'))
+              ? `"${text.replace(/"/g, '""')}"`
+              : text;
+          }).join(','))
+          .join('\\n');
+
+        const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const anchor = document.createElement('a');
+        anchor.href = url;
+        anchor.download = `${sanitizeFilename(entry.field)}_${sanitizeFilename(entry.code)}_detalle.csv`;
+        anchor.click();
+        URL.revokeObjectURL(url);
+      }
+
+      const categories = ['Inconsistencia', 'No parametrizado', 'Autocorregido', 'Otros'];
+      const fields = Array.from(new Set(allIssues.map((issue) => String(issue.field || '').trim()).filter(Boolean)))
+        .sort((a, b) => a.localeCompare(b));
+      findingsContainer.style.setProperty('--findings-col-count', String(Math.max(fields.length, 1)));
+
+      const detailsMap = {};
+      const matrix = {};
+
+      fields.forEach((field) => {
+        matrix[field] = {};
+        categories.forEach((category) => {
+          matrix[field][category] = [];
+        });
+      });
+
       const grouped = new Map();
-      issues.forEach((issue) => {
-        const key = `${issue.field}||${issue.code}||${issue.message}`;
+      allIssues.forEach((issue) => {
+        const field = String(issue.field || '').trim();
+        if (!field) return;
+        const category = classifyIssue(issue);
+        const key = `${field}||${category}||${issue.code}||${issue.message}`;
         if (!grouped.has(key)) {
           grouped.set(key, {
-            field: issue.field,
-            code: issue.code,
-            message: issue.message,
+            field,
+            category,
+            code: String(issue.code || ''),
+            message: String(issue.message || ''),
             rows: new Set(),
           });
         }
         grouped.get(key).rows.add(issue.row);
       });
 
-      Array.from(grouped.values())
-        .sort((a, b) => String(a.field).localeCompare(String(b.field)))
-        .forEach((entry) => {
-          const rows = Array.from(entry.rows).sort((a, b) => a - b);
-          const li = document.createElement('li');
-          li.textContent = `${entry.field} · ${entry.code}: ${entry.message}. Filas: ${rows.join(', ')}`;
-          findingsList.appendChild(li);
+      grouped.forEach((entry) => {
+        const rows = Array.from(entry.rows).sort((a, b) => a - b);
+        entry.rows = rows;
+        matrix[entry.field][entry.category].push(entry);
+      });
+
+      findingsMatrix.insertAdjacentHTML('beforeend', `<div class="findings-cell header">Tipo de hallazgo</div>`);
+      fields.forEach((field) => {
+        findingsMatrix.insertAdjacentHTML('beforeend', `<div class="findings-cell header">${escapeHtml(field)}</div>`);
+      });
+
+      categories.forEach((category) => {
+        findingsMatrix.insertAdjacentHTML('beforeend', `<div class="findings-cell rowlabel">${escapeHtml(category)}</div>`);
+
+        fields.forEach((field) => {
+          const entries = matrix[field][category] || [];
+          if (!entries.length) {
+            findingsMatrix.insertAdjacentHTML('beforeend', `<div class="findings-cell muted">—</div>`);
+            return;
+          }
+
+          const html = entries.map((entry, idx) => {
+            const detailKey = `${field}__${category}__${idx}`;
+            detailsMap[detailKey] = entry;
+            return `
+              <div class="findings-rule">${escapeHtml(entry.code)}</div>
+              <div class="findings-meta">${escapeHtml(entry.message)} · ${entry.rows.length} filas</div>
+              <button class="findings-detail-btn" data-findings-detail="${escapeHtml(detailKey)}">Ver detalle</button>
+            `;
+          }).join('<div style="height:6px"></div>');
+
+          findingsMatrix.insertAdjacentHTML('beforeend', `<div class="findings-cell">${html}</div>`);
         });
+      });
+
+      findingsMatrix.querySelectorAll('button[data-findings-detail]').forEach((button) => {
+        button.addEventListener('click', () => {
+          const key = button.dataset.findingsDetail;
+          const entry = detailsMap[key];
+          if (!entry) return;
+          const previewRows = entry.rows.slice(0, 20).join(', ');
+          const remaining = entry.rows.length > 20 ? ` · +${entry.rows.length - 20} más` : '';
+          findingsDetail.innerHTML = `
+            <div class="findings-detail-title">${escapeHtml(entry.field)} · ${escapeHtml(entry.code)}</div>
+            <div>${escapeHtml(entry.message)}</div>
+            <div style="margin-top:4px;"><strong>Filas:</strong> ${escapeHtml(previewRows)}${remaining}</div>
+            <div class="findings-actions">
+              <button id="findings-copy-btn" class="findings-action-btn">Copiar lista</button>
+              <button id="findings-export-btn" class="findings-action-btn primary">Exportar CSV</button>
+            </div>
+          `;
+          findingsDetail.classList.remove('hidden');
+
+          const copyBtn = document.getElementById('findings-copy-btn');
+          if (copyBtn) {
+            copyBtn.addEventListener('click', async () => {
+              const text = `${entry.field} · ${entry.code}: ${entry.message}. Filas: ${entry.rows.join(', ')}`;
+              try {
+                await navigator.clipboard.writeText(text);
+                copyBtn.textContent = 'Copiado';
+                setTimeout(() => { copyBtn.textContent = 'Copiar lista'; }, 1200);
+              } catch {
+                copyBtn.textContent = 'No disponible';
+                setTimeout(() => { copyBtn.textContent = 'Copiar lista'; }, 1200);
+              }
+            });
+          }
+
+          const exportBtn = document.getElementById('findings-export-btn');
+          if (exportBtn) {
+            exportBtn.addEventListener('click', () => downloadRuleDetailCsv(entry));
+          }
+        });
+      });
 
       findingsContainer.classList.remove('hidden');
     }
@@ -559,10 +995,12 @@ def home() -> str:
     }
 
     async function validateFile() {
-      if (!state.template || !state.sourceFile) return;
+      const template = state.template;
+      if (!template || !state.sourceFile) return;
+      setTemplate(template);
 
       const form = new FormData();
-      form.append('template', state.template);
+      form.append('template', template);
       form.append('csv_file', state.sourceFile);
 
       const res = await fetch('/api/validate', { method: 'POST', body: form });
@@ -623,6 +1061,17 @@ def home() -> str:
       URL.revokeObjectURL(url);
     }
 
+    const templateList = document.querySelector('.template-list');
+    if (templateList) {
+      templateList.addEventListener('click', (event) => {
+        const option = event.target.closest('.template-option');
+        if (!option) return;
+        const template = option.dataset.template;
+        if (!template) return;
+        setTemplate(template);
+      });
+    }
+
     document.querySelectorAll('.template-option').forEach((option) => {
       option.addEventListener('click', () => setTemplate(option.dataset.template));
     });
@@ -666,6 +1115,7 @@ def home() -> str:
       button.addEventListener('click', () => setTab(button.dataset.tab));
     });
 
+    setTemplate('tecnicos');
     updateValidateButtonState();
     setTab('C');
   </script>
