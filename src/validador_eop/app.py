@@ -304,10 +304,27 @@ def home() -> str:
       manualErrors: [],
       correctedCsv: '',
       suggestedDeletionRows: [],
+      correctedRows: [],
       initialErrorCount: 0,
       originalRowsCount: 0,
+      pendingModalRevalidation: false,
       revalidating: false,
     };
+
+    function markRowsAsCorrected(csvRowNumbers) {
+      if (!Array.isArray(csvRowNumbers) || !csvRowNumbers.length) return;
+      const merged = new Set([...(state.correctedRows || []), ...csvRowNumbers.filter((n) => Number.isInteger(n) && n > 1)]);
+      state.correctedRows = Array.from(merged).sort((a, b) => a - b);
+      updateCorrectedRowsSummaryCounter();
+    }
+
+    function updateCorrectedRowsSummaryCounter() {
+      const correctedCountEl = document.getElementById('csv-corrected-count');
+      if (!correctedCountEl) return;
+      const originalRows = Math.max(Number(state.originalRowsCount || 0), Array.isArray(state.rows) ? state.rows.length : 0);
+      const correctedRowsCount = Math.min(Array.isArray(state.correctedRows) ? state.correctedRows.length : 0, originalRows);
+      correctedCountEl.textContent = String(correctedRowsCount);
+    }
 
     function setStep(step) {
       state.step = step;
@@ -425,6 +442,8 @@ def home() -> str:
         state.initialErrorCount = Math.max(payload.summary.error_count || 0, 0);
         state.originalRowsCount = Math.max(Number(payload.summary.total_rows || 0), parsed.rows.length || 0);
         state.suggestedDeletionRows = [];
+        state.correctedRows = [];
+        updateCorrectedRowsSummaryCounter();
       }
 
       const errors = (payload.issues || []).filter((issue) => issue.severity === 'error' && issue.row > 1);
@@ -500,6 +519,7 @@ def home() -> str:
       state.rows[targetRow][item.field] = item.proposed;
       enforceTecnicosRowCorrelation(state.rows[targetRow]);
       item.applied = true;
+      markRowsAsCorrected([item.row]);
       state.correctedCsv = buildCsv(state.headers, state.rows, state.delimiter);
       renderManualTable();
       if (!skipRevalidate) {
@@ -528,6 +548,7 @@ def home() -> str:
         baseError.applied = true;
       }
 
+      markRowsAsCorrected([rowNumber]);
       state.correctedCsv = buildCsv(state.headers, state.rows, state.delimiter);
       renderManualTable();
       if (!skipRevalidate) {
@@ -563,6 +584,11 @@ def home() -> str:
         .replace(/[()]/g, '')
         .replace(/[^a-z0-9]+/g, '_')
         .replace(/^_+|_+$/g, '');
+    }
+
+    function isManualTextEditableField(field) {
+      const key = normalizeFieldKey(field);
+      return ['correo', 'email', 'celular', 'telefono'].includes(key);
     }
 
     function normalizeCatalogValue(value) {
@@ -814,11 +840,16 @@ def home() -> str:
 
         const correlatedOptions = getCorrelatedOptions(item.field, rowData);
         const catalogOptions = correlatedOptions.length ? correlatedOptions : getOptionsForField(item.field);
+        const isTextEditableField = isManualTextEditableField(item.field);
         const hasCatalogOptions = catalogOptions.length > 0;
-        const selectedValue = hasCatalogOptions
-          ? (catalogOptions.includes(item.proposed) ? item.proposed : catalogOptions[0])
-          : '';
-        item.proposed = selectedValue;
+        if (isTextEditableField) {
+          item.proposed = String(item.proposed || item.current || rowData?.[item.field] || '').trim();
+        } else {
+          const selectedValue = hasCatalogOptions
+            ? (catalogOptions.includes(item.proposed) ? item.proposed : catalogOptions[0])
+            : '';
+          item.proposed = selectedValue;
+        }
 
         const optionsHtml = (hasCatalogOptions ? catalogOptions : ['Sin opción de catálogo'])
           .map((opt) => {
@@ -829,6 +860,12 @@ def home() -> str:
           })
           .join('');
 
+        const actionControlHtml = isTextEditableField
+          ? `<input type="text" class="inline-input" data-index-text="${index}" value="${escapeCellHtml(item.proposed)}" placeholder="Escribe el valor corregido" />`
+          : `<select class="inline-input" data-index="${index}" ${hasCatalogOptions ? '' : 'disabled'}>${optionsHtml}</select>`;
+
+        const canApply = isTextEditableField || hasCatalogOptions;
+
         const tr = document.createElement('tr');
         const contextHtml = buildRowContextHtml(rowData, item.field);
         tr.innerHTML = `
@@ -836,8 +873,8 @@ def home() -> str:
           <td>${item.field}</td>
           <td>${contextHtml}</td>
           <td class="field-error">${item.current || ''}</td>
-          <td><select class="inline-input" data-index="${index}" ${hasCatalogOptions ? '' : 'disabled'}>${optionsHtml}</select></td>
-          <td><button class="btn" data-apply="${index}" ${hasCatalogOptions ? '' : 'disabled'}>Aplicar</button></td>
+          <td>${actionControlHtml}</td>
+          <td><button class="btn" data-apply="${index}" ${canApply ? '' : 'disabled'}>Aplicar</button></td>
         `;
         body.appendChild(tr);
       });
@@ -845,6 +882,13 @@ def home() -> str:
       body.querySelectorAll('select[data-index]').forEach((select) => {
         select.addEventListener('change', (event) => {
           const idx = Number(event.target.dataset.index);
+          state.manualErrors[idx].proposed = event.target.value;
+        });
+      });
+
+      body.querySelectorAll('input[data-index-text]').forEach((input) => {
+        input.addEventListener('input', (event) => {
+          const idx = Number(event.target.dataset.indexText);
           state.manualErrors[idx].proposed = event.target.value;
         });
       });
@@ -935,8 +979,13 @@ def home() -> str:
       findingsModal.classList.add('hidden');
 
       function closeFindingsModal() {
+        const shouldRevalidate = state.pendingModalRevalidation === true;
+        state.pendingModalRevalidation = false;
         findingsModal.classList.add('hidden');
         findingsDetail.innerHTML = '';
+        if (shouldRevalidate) {
+          revalidateCurrentCsv();
+        }
       }
 
       if (findingsModalClose) {
@@ -975,7 +1024,7 @@ def home() -> str:
       const deletedRows = Math.max(originalRows - totalRows, 0);
       const rowsWithError = new Set(errors.map((issue) => issue.row)).size;
       const rowsWithWarning = new Set(warnings.map((issue) => issue.row)).size;
-      const correctedRows = Math.max(totalRows - rowsWithError, 0);
+      const correctedRows = Math.min(Array.isArray(state.correctedRows) ? state.correctedRows.length : 0, originalRows);
 
       if (kpiBoard) {
         kpiBoard.innerHTML = `
@@ -1007,7 +1056,7 @@ def home() -> str:
           <div class="csv-context-title">Resumen CSV</div>
           <div class="csv-context-row"><span>Filas originales</span><strong>${originalRows}</strong></div>
           <div class="csv-context-row"><span>Filas eliminadas</span><strong>${deletedRows}</strong></div>
-          <div class="csv-context-row"><span>Filas corregidas</span><strong>${correctedRows}</strong></div>
+          <div class="csv-context-row"><span>Filas corregidas</span><strong id="csv-corrected-count">${correctedRows}</strong></div>
           <div class="csv-context-row"><span>Columnas</span><strong>${totalColumns}</strong></div>
         `;
       }
@@ -1056,6 +1105,29 @@ def home() -> str:
           .replace(/[^a-z0-9_.-]+/gi, '_')
           .replace(/_+/g, '_')
           .replace(/^_+|_+$/g, '');
+      }
+
+      function formatIssueValue(value) {
+        const text = String(value ?? '').trim();
+        return text ? text : '(vacío)';
+      }
+
+      function groupRowsByCurrentInvalidValue(entry) {
+        const groups = new Map();
+        (entry.rows || []).forEach((csvRowNumber) => {
+          const rowIndex = csvRowNumber - 2;
+          if (rowIndex < 0 || rowIndex >= state.rows.length) return;
+          const currentValue = String(state.rows[rowIndex]?.[entry.field] ?? '');
+          if (!groups.has(currentValue)) {
+            groups.set(currentValue, { value: currentValue, rows: [] });
+          }
+          groups.get(currentValue).rows.push(csvRowNumber);
+        });
+
+        return Array.from(groups.values()).sort((a, b) => {
+          if (b.rows.length !== a.rows.length) return b.rows.length - a.rows.length;
+          return String(a.value).localeCompare(String(b.value));
+        });
       }
 
       function downloadRuleDetailCsv(entry) {
@@ -1166,21 +1238,42 @@ def home() -> str:
           const remaining = entry.rows.length > 20 ? ` · +${entry.rows.length - 20} más` : '';
           const canSuggestDelete = isDeletionSuggestionCode(entry.code);
           const fieldOptions = getOptionsForField(entry.field);
+          const isTextEditableField = isManualTextEditableField(entry.field);
           const canMacroCorrect = fieldOptions.length > 0 && entry.rows.length > 0;
+          const canGroupedTextCorrect = isTextEditableField && entry.rows.length > 0;
+          const canGroupedCorrection = canMacroCorrect || canGroupedTextCorrect;
+          const invalidGroups = canGroupedCorrection ? groupRowsByCurrentInvalidValue(entry) : [];
           const macroOptionsHtml = fieldOptions
             .map((option) => `<option value="${escapeHtml(String(option))}">${escapeHtml(String(option))}</option>`)
             .join('');
+          const groupedCorrectionHtml = canGroupedCorrection
+            ? invalidGroups.map((group, idx) => {
+              const groupRowsPreview = group.rows.slice(0, 12).join(', ');
+              const groupRemaining = group.rows.length > 12 ? ` · +${group.rows.length - 12} más` : '';
+              const groupInputControl = canMacroCorrect
+                ? `<select data-findings-group-select="${idx}" class="inline-input" style="max-width:320px;">${macroOptionsHtml}</select>`
+                : `<input type="text" data-findings-group-text="${idx}" class="inline-input" style="max-width:320px;" value="${escapeHtml(String(group.value || ''))}" placeholder="Escribe valor corregido" />`;
+              return `
+                <div data-findings-group-card="${idx}" style="border:1px solid #FECACA; border-radius:8px; padding:8px; background:#fff; margin-top:6px;">
+                  <div style="font-weight:700; color:#912018;">Dato actual: ${escapeHtml(formatIssueValue(group.value))}</div>
+                  <div style="font-size:11px; color:#7A271A; margin-top:2px;">${group.rows.length} filas · ${escapeHtml(groupRowsPreview)}${groupRemaining}</div>
+                  <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin-top:6px;">
+                    ${groupInputControl}
+                    <button data-findings-group-apply="${idx}" class="findings-action-btn primary">Aplicar a ${group.rows.length} filas</button>
+                  </div>
+                </div>
+              `;
+            }).join('')
+            : '';
           findingsDetail.innerHTML = `
             <div class="findings-detail-title">${escapeHtml(entry.field)} · ${escapeHtml(entry.code)}</div>
             <div>${escapeHtml(entry.message)}</div>
             <div style="margin-top:4px;"><strong>Filas:</strong> ${escapeHtml(previewRows)}${remaining}</div>
-            ${canMacroCorrect ? `
+            ${canGroupedCorrection ? `
               <div style="margin-top:8px; border:1px solid #FECACA; border-radius:8px; padding:8px; background:#FFF7F7;">
-                <div style="font-weight:700; color:#912018; margin-bottom:6px;">Corrección masiva</div>
-                <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
-                  <select id="findings-macro-select" class="inline-input" style="max-width:320px;">${macroOptionsHtml}</select>
-                  <button id="findings-macro-apply-btn" class="findings-action-btn primary">Aplicar a ${entry.rows.length} filas</button>
-                </div>
+                <div style="font-weight:700; color:#912018; margin-bottom:6px;">Corrección agrupada por dato errado</div>
+                <div style="font-size:11px; color:#7A271A;">Selecciona el valor correcto por grupo y aplica uno a uno.</div>
+                <div id="findings-grouped-wrapper">${groupedCorrectionHtml}</div>
               </div>
             ` : ''}
             <div class="findings-actions">
@@ -1211,14 +1304,16 @@ def home() -> str:
             exportBtn.addEventListener('click', () => downloadRuleDetailCsv(entry));
           }
 
-          const macroApplyBtn = document.getElementById('findings-macro-apply-btn');
-          const macroSelect = document.getElementById('findings-macro-select');
-          if (macroApplyBtn && macroSelect) {
-            macroApplyBtn.addEventListener('click', async () => {
-              const selected = macroSelect.value;
-              if (!selected) return;
+          findingsDetail.querySelectorAll('button[data-findings-group-apply]').forEach((applyBtn) => {
+            applyBtn.addEventListener('click', async () => {
+              const groupIndex = Number(applyBtn.getAttribute('data-findings-group-apply'));
+              const group = invalidGroups[groupIndex];
+              const select = findingsDetail.querySelector(`select[data-findings-group-select="${groupIndex}"]`);
+              const textInput = findingsDetail.querySelector(`input[data-findings-group-text="${groupIndex}"]`);
+              const selected = canMacroCorrect ? (select?.value || '') : (textInput?.value || '');
+              if (!group || !selected.trim()) return;
 
-              entry.rows.forEach((csvRowNumber) => {
+              group.rows.forEach((csvRowNumber) => {
                 const rowIndex = csvRowNumber - 2;
                 if (rowIndex < 0 || rowIndex >= state.rows.length) return;
                 state.rows[rowIndex][entry.field] = selected;
@@ -1227,11 +1322,21 @@ def home() -> str:
                 }
               });
 
+              markRowsAsCorrected(group.rows);
               state.correctedCsv = buildCsv(state.headers, state.rows, state.delimiter);
-              closeFindingsModal();
-              await revalidateCurrentCsv();
+              state.pendingModalRevalidation = true;
+
+              const groupCard = applyBtn.closest('[data-findings-group-card]');
+              if (groupCard) {
+                groupCard.remove();
+              }
+
+              const groupedWrapper = document.getElementById('findings-grouped-wrapper');
+              if (groupedWrapper && groupedWrapper.querySelectorAll('[data-findings-group-card]').length === 0) {
+                groupedWrapper.innerHTML = '<div style="margin-top:6px; font-size:11px; color:#067647;">No quedan grupos pendientes para este hallazgo.</div>';
+              }
             });
-          }
+          });
 
           const suggestDeleteBtn = document.getElementById('findings-suggest-delete-btn');
           if (suggestDeleteBtn) {
