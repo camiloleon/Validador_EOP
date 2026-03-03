@@ -142,10 +142,11 @@ def home() -> str:
     select.inline-input:disabled { background: #F2F4F7; color: #98A2B3; cursor: not-allowed; }
     .summary-line { margin-top: 8px; color: #912018; font-size: 12px; }
     .note { margin-top: 8px; color: #667085; font-size: 13px; }
-    .findings { margin-top: 8px; padding: 10px 12px; border: 1px solid #FECACA; border-radius: 8px; background: #FFFFFF; }
+    .findings { margin-top: 8px; padding: 10px 12px; border: 1px solid #FECACA; border-radius: 8px; background: #FFFFFF; overflow: hidden; }
     .findings-title { font-size: 13px; font-weight: 700; color: #912018; margin-bottom: 6px; }
-    .findings-grid { display: grid; grid-template-columns: 190px repeat(var(--findings-col-count, 1), minmax(220px, 1fr)); gap: 6px; }
-    .findings-cell { border: 1px solid #FECACA; border-radius: 6px; background: #fff; padding: 6px 8px; font-size: 11px; color: #7A271A; }
+    .findings-scroll { width: 100%; overflow-x: auto; overflow-y: hidden; padding-bottom: 2px; }
+    .findings-grid { display: grid; grid-template-columns: max-content repeat(var(--findings-col-count, 1), max-content); gap: 6px; width: max-content; min-width: 100%; }
+    .findings-cell { border: 1px solid #FECACA; border-radius: 6px; background: #fff; padding: 6px 8px; font-size: 11px; color: #7A271A; width: fit-content; max-width: 320px; }
     .findings-cell.header { background: #F9FAFB; color: #344054; font-weight: 600; }
     .findings-cell.rowlabel { background: #F9FAFB; color: #344054; font-weight: 600; }
     .findings-cell.muted { color: #98A2B3; }
@@ -157,6 +158,19 @@ def home() -> str:
     .findings-actions { margin-top: 6px; display: flex; gap: 6px; }
     .findings-action-btn { border: 1px solid #D0D5DD; background: #fff; color: #344054; border-radius: 6px; font-size: 10px; font-weight: 600; padding: 4px 8px; cursor: pointer; }
     .findings-action-btn.primary { border-color: #DF3346; background: #FFF1F3; color: #B42318; }
+    .result-top { margin-top: 10px; display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 10px; align-items: stretch; }
+    .kpi-board { margin-top: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 8px; }
+    .kpi-card { border: 1px solid #FECACA; border-radius: 8px; background: #fff; padding: 8px; }
+    .kpi-label { font-size: 10px; color: #667085; text-transform: uppercase; letter-spacing: .04em; }
+    .kpi-value { margin-top: 2px; font-size: 18px; font-weight: 700; color: #912018; }
+    .kpi-sub { margin-top: 2px; font-size: 10px; color: #7A271A; }
+    .csv-context-frame { border: 1px solid #FECACA; border-radius: 10px; background: #fff; padding: 10px; font-size: 12px; color: #7A271A; }
+    .csv-context-title { font-size: 11px; font-weight: 700; color: #912018; text-transform: uppercase; letter-spacing: .04em; margin-bottom: 6px; }
+    .csv-context-row { display: flex; justify-content: space-between; gap: 8px; padding: 2px 0; }
+    .csv-context-row strong { color: #B42318; }
+    @media (max-width: 1100px) {
+      .result-top { grid-template-columns: 1fr; }
+    }
     .dup-check { margin-top: 8px; border: 1px solid #FECACA; border-radius: 8px; background: #FFF7F7; padding: 8px 10px; font-size: 11px; color: #7A271A; }
     .dup-check-title { font-weight: 700; color: #912018; margin-bottom: 4px; }
     .dup-check.ok { border-color: #ABEFC6; background: #ECFDF3; color: #067647; }
@@ -205,6 +219,10 @@ def home() -> str:
 
     <div id=\"step-3\" class=\"card hidden\">
       <div id=\"step3-title\" style=\"font-size: 24px; font-weight: 600;\">Paso 2: Resultado de validación · Plantilla: Técnicos</div>
+      <div class="result-top">
+        <div id="manual-kpi-board" class="kpi-board"></div>
+        <div id="csv-context-frame" class="csv-context-frame"></div>
+      </div>
       <div class=\"tabs\">
         <button class=\"tab-btn\" data-tab=\"A\">A. Archivo OK</button>
         <button class=\"tab-btn\" data-tab=\"B\">B. Corrección automática</button>
@@ -223,11 +241,12 @@ def home() -> str:
 
       <div id=\"panel-c\" class=\"panel\">
         <div style=\"font-weight: 600; color: #B42318;\">Resultado C: corrige errores uno a uno</div>
-        <div id="manual-overview" class="summary-line"></div>
         <div id="manual-dup-check" class="dup-check hidden"></div>
         <div id="manual-findings" class="findings hidden">
           <div class="findings-title">Resumen de hallazgos</div>
-          <div id="manual-findings-matrix" class="findings-grid"></div>
+          <div class="findings-scroll">
+            <div id="manual-findings-matrix" class="findings-grid"></div>
+          </div>
         </div>
         <div id="manual-findings-modal" class="findings-modal hidden" role="dialog" aria-modal="true" aria-labelledby="manual-findings-modal-title">
           <div class="findings-modal-card">
@@ -286,6 +305,7 @@ def home() -> str:
       correctedCsv: '',
       suggestedDeletionRows: [],
       initialErrorCount: 0,
+      originalRowsCount: 0,
       revalidating: false,
     };
 
@@ -403,6 +423,7 @@ def home() -> str:
 
       if (resetProgress) {
         state.initialErrorCount = Math.max(payload.summary.error_count || 0, 0);
+        state.originalRowsCount = Math.max(Number(payload.summary.total_rows || 0), parsed.rows.length || 0);
         state.suggestedDeletionRows = [];
       }
 
@@ -901,7 +922,8 @@ def home() -> str:
     }
 
     function renderManualFindings() {
-      const overview = document.getElementById('manual-overview');
+      const kpiBoard = document.getElementById('manual-kpi-board');
+      const csvContextFrame = document.getElementById('csv-context-frame');
       const duplicateCheck = document.getElementById('manual-dup-check');
       const findingsContainer = document.getElementById('manual-findings');
       const findingsMatrix = document.getElementById('manual-findings-matrix');
@@ -947,8 +969,48 @@ def home() -> str:
       const progress = baselineErrors > 0
         ? Math.round(((baselineErrors - Math.min(currentErrorCount, baselineErrors)) / baselineErrors) * 100)
         : 100;
-      const baseOverviewText = `Hallazgos detectados: ${allIssues.length} · Errores: ${errors.length} · Advertencias: ${warnings.length} · Sospechosos: ${suspicious.length} · Avance: ${progress}%`;
-      overview.textContent = baseOverviewText;
+      const totalRows = Array.isArray(state.rows) ? state.rows.length : 0;
+      const totalColumns = Array.isArray(state.headers) ? state.headers.length : 0;
+      const originalRows = Math.max(Number(state.originalRowsCount || 0), totalRows);
+      const deletedRows = Math.max(originalRows - totalRows, 0);
+      const rowsWithError = new Set(errors.map((issue) => issue.row)).size;
+      const rowsWithWarning = new Set(warnings.map((issue) => issue.row)).size;
+      const correctedRows = Math.max(totalRows - rowsWithError, 0);
+
+      if (kpiBoard) {
+        kpiBoard.innerHTML = `
+          <div class="kpi-card">
+            <div class="kpi-label">Porcentaje de corrección</div>
+            <div class="kpi-value">${progress}%</div>
+            <div class="kpi-sub">Base inicial: ${baselineErrors} errores</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Estructura del archivo</div>
+            <div class="kpi-value">${totalRows}×${totalColumns}</div>
+            <div class="kpi-sub">Filas de datos × columnas</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Hallazgos</div>
+            <div class="kpi-value">${allIssues.length}</div>
+            <div class="kpi-sub">Errores: ${errors.length} · Advertencias: ${warnings.length} · Sospechosos: ${suspicious.length}</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Duplicados externos</div>
+            <div class="kpi-value">${externalDuplicateIssues.length}</div>
+            <div class="kpi-sub">Filas con advertencia: ${rowsWithWarning}</div>
+          </div>
+        `;
+      }
+
+      if (csvContextFrame) {
+        csvContextFrame.innerHTML = `
+          <div class="csv-context-title">Resumen CSV</div>
+          <div class="csv-context-row"><span>Filas originales</span><strong>${originalRows}</strong></div>
+          <div class="csv-context-row"><span>Filas eliminadas</span><strong>${deletedRows}</strong></div>
+          <div class="csv-context-row"><span>Filas corregidas</span><strong>${correctedRows}</strong></div>
+          <div class="csv-context-row"><span>Columnas</span><strong>${totalColumns}</strong></div>
+        `;
+      }
 
       if (snapshotIssue || externalDuplicateIssues.length) {
         const duplicatesById = externalDuplicateIssues.filter((issue) => issue.code === 'ALREADY_LOADED_DUPLICATE_ID').length;
@@ -1103,10 +1165,24 @@ def home() -> str:
           const previewRows = entry.rows.slice(0, 20).join(', ');
           const remaining = entry.rows.length > 20 ? ` · +${entry.rows.length - 20} más` : '';
           const canSuggestDelete = isDeletionSuggestionCode(entry.code);
+          const fieldOptions = getOptionsForField(entry.field);
+          const canMacroCorrect = fieldOptions.length > 0 && entry.rows.length > 0;
+          const macroOptionsHtml = fieldOptions
+            .map((option) => `<option value="${escapeHtml(String(option))}">${escapeHtml(String(option))}</option>`)
+            .join('');
           findingsDetail.innerHTML = `
             <div class="findings-detail-title">${escapeHtml(entry.field)} · ${escapeHtml(entry.code)}</div>
             <div>${escapeHtml(entry.message)}</div>
             <div style="margin-top:4px;"><strong>Filas:</strong> ${escapeHtml(previewRows)}${remaining}</div>
+            ${canMacroCorrect ? `
+              <div style="margin-top:8px; border:1px solid #FECACA; border-radius:8px; padding:8px; background:#FFF7F7;">
+                <div style="font-weight:700; color:#912018; margin-bottom:6px;">Corrección masiva</div>
+                <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+                  <select id="findings-macro-select" class="inline-input" style="max-width:320px;">${macroOptionsHtml}</select>
+                  <button id="findings-macro-apply-btn" class="findings-action-btn primary">Aplicar a ${entry.rows.length} filas</button>
+                </div>
+              </div>
+            ` : ''}
             <div class="findings-actions">
               <button id="findings-copy-btn" class="findings-action-btn">Copiar lista</button>
               <button id="findings-export-btn" class="findings-action-btn primary">Exportar CSV</button>
@@ -1135,13 +1211,37 @@ def home() -> str:
             exportBtn.addEventListener('click', () => downloadRuleDetailCsv(entry));
           }
 
+          const macroApplyBtn = document.getElementById('findings-macro-apply-btn');
+          const macroSelect = document.getElementById('findings-macro-select');
+          if (macroApplyBtn && macroSelect) {
+            macroApplyBtn.addEventListener('click', async () => {
+              const selected = macroSelect.value;
+              if (!selected) return;
+
+              entry.rows.forEach((csvRowNumber) => {
+                const rowIndex = csvRowNumber - 2;
+                if (rowIndex < 0 || rowIndex >= state.rows.length) return;
+                state.rows[rowIndex][entry.field] = selected;
+                if (state.template === 'tecnicos') {
+                  enforceTecnicosRowCorrelation(state.rows[rowIndex]);
+                }
+              });
+
+              state.correctedCsv = buildCsv(state.headers, state.rows, state.delimiter);
+              closeFindingsModal();
+              await revalidateCurrentCsv();
+            });
+          }
+
           const suggestDeleteBtn = document.getElementById('findings-suggest-delete-btn');
           if (suggestDeleteBtn) {
             suggestDeleteBtn.addEventListener('click', async () => {
               state.suggestedDeletionRows = Array.from(new Set([...state.suggestedDeletionRows, ...entry.rows])).sort((a, b) => a - b);
               const rowsText = state.suggestedDeletionRows.join(', ');
               const advisory = `Filas sugeridas para eliminar del CSV (posibles duplicados ya cargados): ${rowsText}`;
-              overview.textContent = `${baseOverviewText} · ${advisory}`;
+              if (duplicateCheck && !duplicateCheck.classList.contains('hidden')) {
+                duplicateCheck.innerHTML += `<div style="margin-top:4px;"><strong>Nota:</strong> ${escapeHtml(advisory)}</div>`;
+              }
               try {
                 await navigator.clipboard.writeText(advisory);
                 suggestDeleteBtn.textContent = 'Sugerido + copiado';
