@@ -105,6 +105,12 @@ def _set_value(
     )
 
 
+def _normalize_identifier(value: str | None) -> str:
+    text = "" if value is None else str(value)
+    digits = "".join(ch for ch in text if ch.isdigit())
+    return digits or normalize_key(text)
+
+
 def validate_csv(
     template: str,
     content: bytes,
@@ -247,6 +253,20 @@ def _validate_tecnicos(
     seen_ids: set[str] = set()
     seen_emails: set[str] = set()
 
+    if catalogs.existing_tecnicos_snapshot_date:
+        _add_issue(
+            issues,
+            1,
+            "tecnicos_exportados",
+            "warning",
+            "EXTERNAL_TECHNICIANS_SNAPSHOT",
+            (
+                "La validación de duplicidad contra técnicos cargados usa snapshot con fecha "
+                f"{catalogs.existing_tecnicos_snapshot_date}. "
+                "Registros actualizados posteriormente podrían no detectarse."
+            ),
+        )
+
     for index, row in enumerate(rows, start=2):
         required = ["identificacion", "nombre_completo", "correo", "trabajo", "ciudad"]
         for field in required:
@@ -254,10 +274,22 @@ def _validate_tecnicos(
                 _add_issue(issues, index, field, "error", "REQUIRED", f"El campo {field} es obligatorio")
 
         if row.get("identificacion"):
-            key = normalize_key(row["identificacion"])
+            key = _normalize_identifier(row["identificacion"])
             if key in seen_ids:
                 _add_issue(issues, index, "identificacion", "error", "DUPLICATE_ID", "Identificación duplicada")
             seen_ids.add(key)
+
+            if key in catalogs.existing_tecnicos_ids:
+                _add_issue(
+                    issues,
+                    index,
+                    "identificacion",
+                    "warning",
+                    "ALREADY_LOADED_DUPLICATE_ID",
+                    "Posible duplicado: la identificación ya existe en técnicos cargados al sistema",
+                    row.get("identificacion"),
+                    "ELIMINAR_FILA",
+                )
 
         if row.get("correo"):
             mail_raw = row["correo"].strip()
@@ -267,6 +299,33 @@ def _validate_tecnicos(
             if mail in seen_emails:
                 _add_issue(issues, index, "correo", "error", "DUPLICATE_EMAIL", "Correo duplicado", mail_raw)
             seen_emails.add(mail)
+
+        full_name = normalize_key(row.get("nombre_completo"))
+        email = row.get("correo", "").strip().lower()
+        phone = "".join(ch for ch in row.get("telefono", "") if ch.isdigit())
+
+        if full_name and email and (full_name, email) in catalogs.existing_tecnicos_name_email:
+            _add_issue(
+                issues,
+                index,
+                "nombre_completo",
+                "warning",
+                "ALREADY_LOADED_DUPLICATE_NAME_EMAIL",
+                "Posible duplicado: nombre y correo ya existen en técnicos cargados al sistema",
+                row.get("nombre_completo"),
+                "ELIMINAR_FILA",
+            )
+        elif full_name and phone and (full_name, phone) in catalogs.existing_tecnicos_name_phone:
+            _add_issue(
+                issues,
+                index,
+                "nombre_completo",
+                "warning",
+                "ALREADY_LOADED_DUPLICATE_NAME_PHONE",
+                "Posible duplicado: nombre y teléfono ya existen en técnicos cargados al sistema",
+                row.get("nombre_completo"),
+                "ELIMINAR_FILA",
+            )
 
         area = normalize_key(row.get("area"))
         if area and area not in catalogs.areas:

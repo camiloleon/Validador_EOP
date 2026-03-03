@@ -26,6 +26,11 @@ class SubmitRequest(BaseModel):
     corrected_csv: str
 
 
+class RevalidateRequest(BaseModel):
+  template: str
+  corrected_csv: str
+
+
 class SubmitResponse(BaseModel):
     accepted: bool
     mode: str
@@ -69,6 +74,13 @@ def submit_endpoint(request: SubmitRequest) -> SubmitResponse:
         message=result.message,
         external_id=result.external_id,
     )
+
+
+@app.post("/api/revalidate", response_model=ValidationResult)
+def revalidate_endpoint(request: RevalidateRequest) -> ValidationResult:
+    catalogs = get_catalogs()
+    content = request.corrected_csv.encode("utf-8")
+    return validate_csv(template=request.template, content=content, catalogs=catalogs)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -145,6 +157,14 @@ def home() -> str:
     .findings-actions { margin-top: 6px; display: flex; gap: 6px; }
     .findings-action-btn { border: 1px solid #D0D5DD; background: #fff; color: #344054; border-radius: 6px; font-size: 10px; font-weight: 600; padding: 4px 8px; cursor: pointer; }
     .findings-action-btn.primary { border-color: #DF3346; background: #FFF1F3; color: #B42318; }
+    .dup-check { margin-top: 8px; border: 1px solid #FECACA; border-radius: 8px; background: #FFF7F7; padding: 8px 10px; font-size: 11px; color: #7A271A; }
+    .dup-check-title { font-weight: 700; color: #912018; margin-bottom: 4px; }
+    .dup-check.ok { border-color: #ABEFC6; background: #ECFDF3; color: #067647; }
+    .findings-modal { position: fixed; inset: 0; background: rgba(16, 24, 40, 0.45); display: flex; align-items: center; justify-content: center; z-index: 50; }
+    .findings-modal.hidden { display: none; }
+    .findings-modal-card { width: min(680px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow: auto; border: 1px solid #FECACA; border-radius: 12px; background: #fff; padding: 14px; box-shadow: 0 12px 28px rgba(16, 24, 40, 0.2); }
+    .findings-modal-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+    .findings-modal-close { border: 1px solid #D0D5DD; background: #fff; color: #344054; border-radius: 8px; padding: 4px 8px; cursor: pointer; font-size: 11px; font-weight: 600; }
   </style>
 </head>
 <body>
@@ -204,10 +224,19 @@ def home() -> str:
       <div id=\"panel-c\" class=\"panel\">
         <div style=\"font-weight: 600; color: #B42318;\">Resultado C: corrige errores uno a uno</div>
         <div id="manual-overview" class="summary-line"></div>
+        <div id="manual-dup-check" class="dup-check hidden"></div>
         <div id="manual-findings" class="findings hidden">
           <div class="findings-title">Resumen de hallazgos</div>
           <div id="manual-findings-matrix" class="findings-grid"></div>
-          <div id="manual-findings-detail" class="findings-detail hidden"></div>
+        </div>
+        <div id="manual-findings-modal" class="findings-modal hidden" role="dialog" aria-modal="true" aria-labelledby="manual-findings-modal-title">
+          <div class="findings-modal-card">
+            <div class="findings-modal-head">
+              <div id="manual-findings-modal-title" class="findings-detail-title">Detalle de hallazgo</div>
+              <button id="manual-findings-close" type="button" class="findings-modal-close">Cerrar</button>
+            </div>
+            <div id="manual-findings-detail" class="findings-detail"></div>
+          </div>
         </div>
         <div style="margin-top: 8px; font-size: 12px; font-weight: 700; color: #912018;">Opciones de corrección</div>
         <table>
@@ -225,7 +254,7 @@ def home() -> str:
         </table>
         <div id=\"manual-summary\" class=\"summary-line\">Se muestra una fila por cada error detectado en el validador.</div>
         <div class=\"actions\" style=\"justify-content: end; margin-top: 8px;\">
-          <button id=\"apply-all\" class=\"btn\" onclick=\"window.__applyAllCorrections && window.__applyAllCorrections()\">Aplicar todas y regenerar CSV</button>
+          <button id=\"apply-all\" class=\"btn\">Aplicar todas y regenerar CSV</button>
         </div>
       </div>
 
@@ -255,6 +284,9 @@ def home() -> str:
       delimiter: ',',
       manualErrors: [],
       correctedCsv: '',
+      suggestedDeletionRows: [],
+      initialErrorCount: 0,
+      revalidating: false,
     };
 
     function setStep(step) {
@@ -359,6 +391,63 @@ def home() -> str:
       return lines.join('\\n');
     }
 
+    function applyValidationPayload(payload, resetProgress = false) {
+      state.validation = payload;
+      state.correctionOptions = payload.correction_options || {};
+      state.correlationMaps = payload.correlation_maps || {};
+      state.delimiter = payload.summary.delimiter || ',';
+      const parsed = parseCsv(payload.corrected_csv || '', state.delimiter);
+      state.headers = parsed.headers;
+      state.rows = parsed.rows;
+      state.correctedCsv = payload.corrected_csv || '';
+
+      if (resetProgress) {
+        state.initialErrorCount = Math.max(payload.summary.error_count || 0, 0);
+        state.suggestedDeletionRows = [];
+      }
+
+      const errors = (payload.issues || []).filter((issue) => issue.severity === 'error' && issue.row > 1);
+      state.manualErrors = errors
+        .map((issue) => ({
+          row: issue.row,
+          field: issue.field,
+          current: issue.current_value ?? '',
+          proposed: issue.suggested_value ?? issue.current_value ?? '',
+        }))
+        .sort((a, b) => a.row - b.row || String(a.field).localeCompare(String(b.field)));
+
+      document.getElementById('panel-b-text').textContent =
+        `Correcciones automáticas aplicadas: ${payload.summary.correction_count}.`;
+    }
+
+    async function revalidateCurrentCsv() {
+      if (state.revalidating || !state.template || !state.correctedCsv) {
+        return;
+      }
+
+      state.revalidating = true;
+      try {
+        const res = await fetch('/api/revalidate', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ template: state.template, corrected_csv: state.correctedCsv }),
+        });
+
+        const payload = await res.json();
+        if (!res.ok) {
+          document.getElementById('api-error').classList.remove('hidden');
+          document.getElementById('api-error').textContent = payload.detail || 'No fue posible revalidar el archivo actualizado.';
+          return;
+        }
+
+        applyValidationPayload(payload, false);
+        renderManualTable();
+        renderManualFindings();
+      } finally {
+        state.revalidating = false;
+      }
+    }
+
     function enforceTecnicosRowCorrelation(rowData) {
       if (!rowData || state.template !== 'tecnicos') {
         return;
@@ -381,7 +470,7 @@ def home() -> str:
       }
     }
 
-    function applyCorrection(index) {
+    async function applyCorrection(index, skipRevalidate = false) {
       const item = state.manualErrors[index];
       if (!item) return;
       const targetRow = item.row - 2;
@@ -392,9 +481,12 @@ def home() -> str:
       item.applied = true;
       state.correctedCsv = buildCsv(state.headers, state.rows, state.delimiter);
       renderManualTable();
+      if (!skipRevalidate) {
+        await revalidateCurrentCsv();
+      }
     }
 
-    function applyPairCorrection(rowNumber, cityValue, baseValue) {
+    async function applyPairCorrection(rowNumber, cityValue, baseValue, skipRevalidate = false) {
       const targetRow = rowNumber - 2;
       if (targetRow < 0 || targetRow >= state.rows.length) return;
 
@@ -417,9 +509,12 @@ def home() -> str:
 
       state.correctedCsv = buildCsv(state.headers, state.rows, state.delimiter);
       renderManualTable();
+      if (!skipRevalidate) {
+        await revalidateCurrentCsv();
+      }
     }
 
-    function applyAllCorrections() {
+    async function applyAllCorrections() {
       const processedPairRows = new Set();
       state.manualErrors.forEach((item, index) => {
         if (state.template === 'tecnicos' && isCityBasePairField(item.field)) {
@@ -429,15 +524,16 @@ def home() -> str:
 
           const cityError = findManualErrorByRowField(item.row, 'ciudad');
           const baseError = findManualErrorByRowField(item.row, 'base_operativa');
-          applyPairCorrection(item.row, cityError?.proposed || '', baseError?.proposed || '');
+          applyPairCorrection(item.row, cityError?.proposed || '', baseError?.proposed || '', true);
           processedPairRows.add(item.row);
           return;
         }
 
-        applyCorrection(index);
+        applyCorrection(index, true);
       });
 
       state.correctedCsv = buildCsv(state.headers, state.rows, state.delimiter);
+      await revalidateCurrentCsv();
     }
 
     function normalizeFieldKey(field) {
@@ -720,7 +816,7 @@ def home() -> str:
           <td>${contextHtml}</td>
           <td class="field-error">${item.current || ''}</td>
           <td><select class="inline-input" data-index="${index}" ${hasCatalogOptions ? '' : 'disabled'}>${optionsHtml}</select></td>
-          <td><button class="btn" data-apply="${index}" ${hasCatalogOptions ? '' : 'disabled'} onclick="window.__applyCorrection && window.__applyCorrection(${index})">Aplicar</button></td>
+          <td><button class="btn" data-apply="${index}" ${hasCatalogOptions ? '' : 'disabled'}>Aplicar</button></td>
         `;
         body.appendChild(tr);
       });
@@ -806,23 +902,72 @@ def home() -> str:
 
     function renderManualFindings() {
       const overview = document.getElementById('manual-overview');
+      const duplicateCheck = document.getElementById('manual-dup-check');
       const findingsContainer = document.getElementById('manual-findings');
       const findingsMatrix = document.getElementById('manual-findings-matrix');
       const findingsDetail = document.getElementById('manual-findings-detail');
+      const findingsModal = document.getElementById('manual-findings-modal');
+      const findingsModalClose = document.getElementById('manual-findings-close');
       findingsMatrix.innerHTML = '';
       findingsDetail.innerHTML = '';
-      findingsDetail.classList.add('hidden');
+      findingsModal.classList.add('hidden');
+
+      function closeFindingsModal() {
+        findingsModal.classList.add('hidden');
+        findingsDetail.innerHTML = '';
+      }
+
+      if (findingsModalClose) {
+        findingsModalClose.onclick = closeFindingsModal;
+      }
+
+      findingsModal.onclick = (event) => {
+        if (event.target === findingsModal) {
+          closeFindingsModal();
+        }
+      };
 
       const allIssues = (state.validation?.issues || []).filter(
-        (issue) => ['error', 'warning', 'suspicious'].includes(issue.severity) && issue.row > 1
+        (issue) => ['error', 'warning', 'suspicious'].includes(issue.severity)
       );
-      const errors = allIssues.filter((issue) => issue.severity === 'error');
-      const warnings = allIssues.filter((issue) => issue.severity === 'warning');
-      const suspicious = allIssues.filter((issue) => issue.severity === 'suspicious');
+      const matrixIssues = allIssues.filter((issue) => issue.row > 1);
+      const errors = matrixIssues.filter((issue) => issue.severity === 'error');
+      const warnings = matrixIssues.filter((issue) => issue.severity === 'warning');
+      const suspicious = matrixIssues.filter((issue) => issue.severity === 'suspicious');
 
-      overview.textContent = `Hallazgos detectados: ${allIssues.length} · Errores: ${errors.length} · Advertencias: ${warnings.length} · Sospechosos: ${suspicious.length}`;
+      const externalDuplicateIssues = allIssues.filter((issue) => [
+        'ALREADY_LOADED_DUPLICATE_ID',
+        'ALREADY_LOADED_DUPLICATE_NAME_EMAIL',
+        'ALREADY_LOADED_DUPLICATE_NAME_PHONE',
+      ].includes(String(issue.code || '').toUpperCase()));
+      const snapshotIssue = allIssues.find((issue) => String(issue.code || '').toUpperCase() === 'EXTERNAL_TECHNICIANS_SNAPSHOT');
 
-      if (!allIssues.length) {
+      const currentErrorCount = errors.length;
+      const baselineErrors = Math.max(state.initialErrorCount || currentErrorCount, 0);
+      const progress = baselineErrors > 0
+        ? Math.round(((baselineErrors - Math.min(currentErrorCount, baselineErrors)) / baselineErrors) * 100)
+        : 100;
+      const baseOverviewText = `Hallazgos detectados: ${allIssues.length} · Errores: ${errors.length} · Advertencias: ${warnings.length} · Sospechosos: ${suspicious.length} · Avance: ${progress}%`;
+      overview.textContent = baseOverviewText;
+
+      if (snapshotIssue || externalDuplicateIssues.length) {
+        const duplicatesById = externalDuplicateIssues.filter((issue) => issue.code === 'ALREADY_LOADED_DUPLICATE_ID').length;
+        const duplicatesByNameEmail = externalDuplicateIssues.filter((issue) => issue.code === 'ALREADY_LOADED_DUPLICATE_NAME_EMAIL').length;
+        const duplicatesByNamePhone = externalDuplicateIssues.filter((issue) => issue.code === 'ALREADY_LOADED_DUPLICATE_NAME_PHONE').length;
+        duplicateCheck.classList.remove('hidden');
+        duplicateCheck.classList.toggle('ok', externalDuplicateIssues.length === 0);
+        duplicateCheck.innerHTML = `
+          <div class="dup-check-title">Validación contra técnicos ya cargados</div>
+          <div>Posibles duplicados detectados: <strong>${externalDuplicateIssues.length}</strong> (Cédula: ${duplicatesById}, Nombre+Email: ${duplicatesByNameEmail}, Nombre+Teléfono: ${duplicatesByNamePhone})</div>
+          ${snapshotIssue ? `<div style="margin-top:4px;">${escapeHtml(snapshotIssue.message || '')}</div>` : ''}
+        `;
+      } else {
+        duplicateCheck.classList.add('hidden');
+        duplicateCheck.classList.remove('ok');
+        duplicateCheck.innerHTML = '';
+      }
+
+      if (!matrixIssues.length) {
         findingsContainer.classList.add('hidden');
         return;
       }
@@ -874,8 +1019,16 @@ def home() -> str:
         URL.revokeObjectURL(url);
       }
 
+      function isDeletionSuggestionCode(code) {
+        return [
+          'ALREADY_LOADED_DUPLICATE_ID',
+          'ALREADY_LOADED_DUPLICATE_NAME_EMAIL',
+          'ALREADY_LOADED_DUPLICATE_NAME_PHONE',
+        ].includes(String(code || '').toUpperCase());
+      }
+
       const categories = ['Inconsistencia', 'No parametrizado', 'Autocorregido', 'Otros'];
-      const fields = Array.from(new Set(allIssues.map((issue) => String(issue.field || '').trim()).filter(Boolean)))
+      const fields = Array.from(new Set(matrixIssues.map((issue) => String(issue.field || '').trim()).filter(Boolean)))
         .sort((a, b) => a.localeCompare(b));
       findingsContainer.style.setProperty('--findings-col-count', String(Math.max(fields.length, 1)));
 
@@ -890,7 +1043,7 @@ def home() -> str:
       });
 
       const grouped = new Map();
-      allIssues.forEach((issue) => {
+      matrixIssues.forEach((issue) => {
         const field = String(issue.field || '').trim();
         if (!field) return;
         const category = classifyIssue(issue);
@@ -949,6 +1102,7 @@ def home() -> str:
           if (!entry) return;
           const previewRows = entry.rows.slice(0, 20).join(', ');
           const remaining = entry.rows.length > 20 ? ` · +${entry.rows.length - 20} más` : '';
+          const canSuggestDelete = isDeletionSuggestionCode(entry.code);
           findingsDetail.innerHTML = `
             <div class="findings-detail-title">${escapeHtml(entry.field)} · ${escapeHtml(entry.code)}</div>
             <div>${escapeHtml(entry.message)}</div>
@@ -956,9 +1110,10 @@ def home() -> str:
             <div class="findings-actions">
               <button id="findings-copy-btn" class="findings-action-btn">Copiar lista</button>
               <button id="findings-export-btn" class="findings-action-btn primary">Exportar CSV</button>
+              ${canSuggestDelete ? '<button id="findings-suggest-delete-btn" class="findings-action-btn">Sugerir eliminación</button><button id="findings-apply-delete-btn" class="findings-action-btn primary">Eliminar filas sugeridas</button>' : ''}
             </div>
           `;
-          findingsDetail.classList.remove('hidden');
+          findingsModal.classList.remove('hidden');
 
           const copyBtn = document.getElementById('findings-copy-btn');
           if (copyBtn) {
@@ -978,6 +1133,43 @@ def home() -> str:
           const exportBtn = document.getElementById('findings-export-btn');
           if (exportBtn) {
             exportBtn.addEventListener('click', () => downloadRuleDetailCsv(entry));
+          }
+
+          const suggestDeleteBtn = document.getElementById('findings-suggest-delete-btn');
+          if (suggestDeleteBtn) {
+            suggestDeleteBtn.addEventListener('click', async () => {
+              state.suggestedDeletionRows = Array.from(new Set([...state.suggestedDeletionRows, ...entry.rows])).sort((a, b) => a - b);
+              const rowsText = state.suggestedDeletionRows.join(', ');
+              const advisory = `Filas sugeridas para eliminar del CSV (posibles duplicados ya cargados): ${rowsText}`;
+              overview.textContent = `${baseOverviewText} · ${advisory}`;
+              try {
+                await navigator.clipboard.writeText(advisory);
+                suggestDeleteBtn.textContent = 'Sugerido + copiado';
+              } catch {
+                suggestDeleteBtn.textContent = 'Sugerido';
+              }
+              setTimeout(() => { suggestDeleteBtn.textContent = 'Sugerir eliminación'; }, 1500);
+            });
+          }
+
+          const applyDeleteBtn = document.getElementById('findings-apply-delete-btn');
+          if (applyDeleteBtn) {
+            applyDeleteBtn.addEventListener('click', async () => {
+              const rowsToDelete = Array.from(new Set(entry.rows)).sort((a, b) => b - a);
+              if (!rowsToDelete.length) return;
+
+              rowsToDelete.forEach((csvRowNumber) => {
+                const rowIndex = csvRowNumber - 2;
+                if (rowIndex >= 0 && rowIndex < state.rows.length) {
+                  state.rows.splice(rowIndex, 1);
+                }
+              });
+
+              state.suggestedDeletionRows = Array.from(new Set([...state.suggestedDeletionRows, ...entry.rows])).sort((a, b) => a - b);
+              state.correctedCsv = buildCsv(state.headers, state.rows, state.delimiter);
+              closeFindingsModal();
+              await revalidateCurrentCsv();
+            });
           }
         });
       });
@@ -1011,27 +1203,7 @@ def home() -> str:
         return;
       }
 
-      state.validation = payload;
-      state.correctionOptions = payload.correction_options || {};
-      state.correlationMaps = payload.correlation_maps || {};
-      state.delimiter = payload.summary.delimiter || ',';
-      const parsed = parseCsv(payload.corrected_csv || '', state.delimiter);
-      state.headers = parsed.headers;
-      state.rows = parsed.rows;
-      state.correctedCsv = payload.corrected_csv || '';
-
-      const errors = (payload.issues || []).filter((issue) => issue.severity === 'error' && issue.row > 1);
-      state.manualErrors = errors
-        .map((issue) => ({
-          row: issue.row,
-          field: issue.field,
-          current: issue.current_value ?? '',
-          proposed: issue.suggested_value ?? issue.current_value ?? '',
-        }))
-        .sort((a, b) => a.row - b.row || String(a.field).localeCompare(String(b.field)));
-
-      document.getElementById('panel-b-text').textContent =
-        `Correcciones automáticas aplicadas: ${payload.summary.correction_count}.`;
+      applyValidationPayload(payload, true);
 
       if (payload.summary.error_count === 0) {
         if (payload.summary.correction_count > 0) {

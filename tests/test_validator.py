@@ -19,6 +19,25 @@ def _catalogs() -> Catalogs:
     )
 
 
+def _catalogs_with_existing_tecnicos() -> Catalogs:
+    return Catalogs(
+        roles={"TECNICO", "OWNER", "JEFE"},
+        areas={"MINTIC CENTROS DIGITALES", "UMM"},
+        trabajos={"MANTENIMIENTO", "SUPERVISOR"},
+        trabajos_por_area={"MINTIC CENTROS DIGITALES": {"MANTENIMIENTO", "SUPERVISOR"}},
+        ciudades={"MEDELLIN", "APARTADO", "IBAGUE"},
+        ciudad_to_base={"MEDELLIN": "ITAGUI", "APARTADO": "ITAGUI", "IBAGUE": "TOLIMA"},
+        ciudad_to_regional={"MEDELLIN": "R2 NORORIENTE"},
+        bases={"ITAGUI", "TOLIMA"},
+        regionales={"R2 NORORIENTE", "R1 COSTA"},
+        companias_nit={"900123456-7"},
+        existing_tecnicos_ids={"123456"},
+        existing_tecnicos_name_email={("JUAN PEREZ", "juan@mail.com")},
+        existing_tecnicos_name_phone={("ANA GOMEZ", "3001234567")},
+        existing_tecnicos_snapshot_date="2026-03-01 09:30",
+    )
+
+
 def test_tecnicos_valid_and_autofix_base() -> None:
     content = b"identificacion;nombre_completo;correo;telefono;area;trabajo;ciudad;base_operativa;estado_operativo\n123;NOMBRE UNO;uno@mail.com;;Mintic Centros Digitales;Mantenimiento;MEDELLIN;;ACTIVO\n"
     result = validate_csv("tecnicos", content, _catalogs())
@@ -76,3 +95,23 @@ def test_tecnicos_base_without_city_is_error() -> None:
     missing_city = [issue for issue in result.issues if issue.code == "MISSING_CITY_FOR_BASE"]
     assert missing_city
     assert missing_city[0].severity == "error"
+
+
+def test_tecnicos_warns_duplicate_against_existing_by_id() -> None:
+    content = b"identificacion;nombre_completo;correo;telefono;area;trabajo;ciudad;base_operativa;estado_operativo\n123456;JUAN PEREZ;otro@mail.com;3000000000;MINTIC CENTROS DIGITALES;MANTENIMIENTO;MEDELLIN;ITAGUI;ACTIVO\n"
+    result = validate_csv("tecnicos", content, _catalogs_with_existing_tecnicos())
+    issues = [issue for issue in result.issues if issue.code == "ALREADY_LOADED_DUPLICATE_ID"]
+    assert issues
+    assert issues[0].suggested_value == "ELIMINAR_FILA"
+
+
+def test_tecnicos_warns_duplicate_against_existing_by_name_email() -> None:
+    content = b"identificacion;nombre_completo;correo;telefono;area;trabajo;ciudad;base_operativa;estado_operativo\n999999;JUAN PEREZ;juan@mail.com;3111111111;MINTIC CENTROS DIGITALES;MANTENIMIENTO;MEDELLIN;ITAGUI;ACTIVO\n"
+    result = validate_csv("tecnicos", content, _catalogs_with_existing_tecnicos())
+    assert any(issue.code == "ALREADY_LOADED_DUPLICATE_NAME_EMAIL" for issue in result.issues)
+
+
+def test_tecnicos_warns_snapshot_date_limitation() -> None:
+    content = b"identificacion;nombre_completo;correo;telefono;area;trabajo;ciudad;base_operativa;estado_operativo\n999998;ANA GOMEZ;ana.otra@mail.com;3001234567;MINTIC CENTROS DIGITALES;MANTENIMIENTO;MEDELLIN;ITAGUI;ACTIVO\n"
+    result = validate_csv("tecnicos", content, _catalogs_with_existing_tecnicos())
+    assert any(issue.code == "EXTERNAL_TECHNICIANS_SNAPSHOT" for issue in result.issues)

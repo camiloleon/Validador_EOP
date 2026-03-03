@@ -12,3 +12,4 @@ def test_catalog_loader_reads_excel() -> None:
     assert len(catalogs.areas) > 0
     assert len(catalogs.ciudades) > 0
     assert len(catalogs.regionales) > 0
+    assert len(catalogs.existing_tecnicos_ids) > 0
