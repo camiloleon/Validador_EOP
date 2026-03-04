@@ -326,6 +326,25 @@ def home() -> str:
       correctedCountEl.textContent = String(correctedRowsCount);
     }
 
+    function renderCsvContextSummary() {
+      const csvContextFrame = document.getElementById('csv-context-frame');
+      if (!csvContextFrame) return;
+
+      const totalRows = Array.isArray(state.rows) ? state.rows.length : 0;
+      const totalColumns = Array.isArray(state.headers) ? state.headers.length : 0;
+      const originalRows = Math.max(Number(state.originalRowsCount || 0), totalRows);
+      const deletedRows = Math.max(originalRows - totalRows, 0);
+      const correctedRows = Math.min(Array.isArray(state.correctedRows) ? state.correctedRows.length : 0, originalRows);
+
+      csvContextFrame.innerHTML = `
+        <div class="csv-context-title">Resumen CSV</div>
+        <div class="csv-context-row"><span>Filas originales</span><strong>${originalRows}</strong></div>
+        <div class="csv-context-row"><span>Filas eliminadas</span><strong>${deletedRows}</strong></div>
+        <div class="csv-context-row"><span>Filas corregidas</span><strong id="csv-corrected-count">${correctedRows}</strong></div>
+        <div class="csv-context-row"><span>Columnas</span><strong>${totalColumns}</strong></div>
+      `;
+    }
+
     function setStep(step) {
       state.step = step;
       document.getElementById('step-1').classList.toggle('hidden', step !== 1);
@@ -445,6 +464,8 @@ def home() -> str:
         state.correctedRows = [];
         updateCorrectedRowsSummaryCounter();
       }
+
+      renderCsvContextSummary();
 
       const errors = (payload.issues || []).filter((issue) => issue.severity === 'error' && issue.row > 1);
       state.manualErrors = errors
@@ -967,7 +988,6 @@ def home() -> str:
 
     function renderManualFindings() {
       const kpiBoard = document.getElementById('manual-kpi-board');
-      const csvContextFrame = document.getElementById('csv-context-frame');
       const duplicateCheck = document.getElementById('manual-dup-check');
       const findingsContainer = document.getElementById('manual-findings');
       const findingsMatrix = document.getElementById('manual-findings-matrix');
@@ -1010,6 +1030,8 @@ def home() -> str:
         'ALREADY_LOADED_DUPLICATE_ID',
         'ALREADY_LOADED_DUPLICATE_NAME_EMAIL',
         'ALREADY_LOADED_DUPLICATE_NAME_PHONE',
+        'ALREADY_LOADED_USER_DUPLICATE_ID',
+        'ALREADY_LOADED_USER_DUPLICATE_EMAIL',
       ].includes(String(issue.code || '').toUpperCase()));
       const snapshotIssue = allIssues.find((issue) => String(issue.code || '').toUpperCase() === 'EXTERNAL_TECHNICIANS_SNAPSHOT');
 
@@ -1051,25 +1073,17 @@ def home() -> str:
         `;
       }
 
-      if (csvContextFrame) {
-        csvContextFrame.innerHTML = `
-          <div class="csv-context-title">Resumen CSV</div>
-          <div class="csv-context-row"><span>Filas originales</span><strong>${originalRows}</strong></div>
-          <div class="csv-context-row"><span>Filas eliminadas</span><strong>${deletedRows}</strong></div>
-          <div class="csv-context-row"><span>Filas corregidas</span><strong id="csv-corrected-count">${correctedRows}</strong></div>
-          <div class="csv-context-row"><span>Columnas</span><strong>${totalColumns}</strong></div>
-        `;
-      }
+      renderCsvContextSummary();
 
       if (snapshotIssue || externalDuplicateIssues.length) {
-        const duplicatesById = externalDuplicateIssues.filter((issue) => issue.code === 'ALREADY_LOADED_DUPLICATE_ID').length;
-        const duplicatesByNameEmail = externalDuplicateIssues.filter((issue) => issue.code === 'ALREADY_LOADED_DUPLICATE_NAME_EMAIL').length;
-        const duplicatesByNamePhone = externalDuplicateIssues.filter((issue) => issue.code === 'ALREADY_LOADED_DUPLICATE_NAME_PHONE').length;
+        const duplicatesById = externalDuplicateIssues.filter((issue) => ['ALREADY_LOADED_DUPLICATE_ID', 'ALREADY_LOADED_USER_DUPLICATE_ID'].includes(String(issue.code || '').toUpperCase())).length;
+        const duplicatesByNameEmail = externalDuplicateIssues.filter((issue) => ['ALREADY_LOADED_DUPLICATE_NAME_EMAIL', 'ALREADY_LOADED_USER_DUPLICATE_EMAIL'].includes(String(issue.code || '').toUpperCase())).length;
+        const duplicatesByNamePhone = externalDuplicateIssues.filter((issue) => String(issue.code || '').toUpperCase() === 'ALREADY_LOADED_DUPLICATE_NAME_PHONE').length;
         duplicateCheck.classList.remove('hidden');
         duplicateCheck.classList.toggle('ok', externalDuplicateIssues.length === 0);
         duplicateCheck.innerHTML = `
-          <div class="dup-check-title">Validación contra técnicos ya cargados</div>
-          <div>Posibles duplicados detectados: <strong>${externalDuplicateIssues.length}</strong> (Cédula: ${duplicatesById}, Nombre+Email: ${duplicatesByNameEmail}, Nombre+Teléfono: ${duplicatesByNamePhone})</div>
+          <div class="dup-check-title">Validación de duplicidad contra registros ya cargados</div>
+          <div>Posibles duplicados detectados: <strong>${externalDuplicateIssues.length}</strong> (Identificación: ${duplicatesById}, Nombre/Email: ${duplicatesByNameEmail}, Nombre/Teléfono: ${duplicatesByNamePhone})</div>
           ${snapshotIssue ? `<div style="margin-top:4px;">${escapeHtml(snapshotIssue.message || '')}</div>` : ''}
         `;
       } else {
@@ -1158,6 +1172,9 @@ def home() -> str:
           'ALREADY_LOADED_DUPLICATE_ID',
           'ALREADY_LOADED_DUPLICATE_NAME_EMAIL',
           'ALREADY_LOADED_DUPLICATE_NAME_PHONE',
+          'ALREADY_LOADED_USER_DUPLICATE_ID',
+          'ALREADY_LOADED_USER_DUPLICATE_EMAIL',
+          'DUPLICATE_IDENTIFIER',
         ].includes(String(code || '').toUpperCase());
       }
 

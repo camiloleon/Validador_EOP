@@ -167,7 +167,7 @@ def validate_csv(
     elif template_key == "usuarios":
         _validate_usuarios(rows, catalogs, issues, corrections)
     elif template_key == "plan_padrino":
-        _validate_plan_padrino(rows, issues)
+        _validate_plan_padrino(rows, catalogs, issues)
 
     output = io.StringIO()
     writer = csv.DictWriter(output, fieldnames=expected_cols, delimiter=delimiter)
@@ -428,6 +428,20 @@ def _validate_usuarios(
     seen_ids: set[str] = set()
     seen_emails: set[str] = set()
 
+    if catalogs.existing_tecnicos_snapshot_date:
+        _add_issue(
+            issues,
+            1,
+            "tecnicos_exportados",
+            "warning",
+            "EXTERNAL_USERS_SNAPSHOT",
+            (
+                "La validación de duplicidad de usuarios usa snapshot con fecha "
+                f"{catalogs.existing_tecnicos_snapshot_date}. "
+                "Registros actualizados posteriormente podrían no detectarse."
+            ),
+        )
+
     required = [
         "nombre completo",
         "email",
@@ -449,10 +463,21 @@ def _validate_usuarios(
             if lower in seen_emails:
                 _add_issue(issues, index, "email", "error", "DUPLICATE_EMAIL", "Email duplicado", email)
             seen_emails.add(lower)
+            if lower in catalogs.existing_tecnicos_emails:
+                _add_issue(
+                    issues,
+                    index,
+                    "email",
+                    "warning",
+                    "ALREADY_LOADED_USER_DUPLICATE_EMAIL",
+                    "Posible duplicado: el email ya existe en usuarios cargados al sistema",
+                    email,
+                    "ELIMINAR_FILA",
+                )
 
         identifier = row.get("identificacion", "").strip()
         if identifier:
-            norm = normalize_key(identifier)
+            norm = _normalize_identifier(identifier)
             if norm in seen_ids:
                 _add_issue(
                     issues,
@@ -464,6 +489,17 @@ def _validate_usuarios(
                     identifier,
                 )
             seen_ids.add(norm)
+            if norm in catalogs.existing_tecnicos_ids:
+                _add_issue(
+                    issues,
+                    index,
+                    "identificacion",
+                    "warning",
+                    "ALREADY_LOADED_USER_DUPLICATE_ID",
+                    "Posible duplicado: la identificación ya existe en usuarios cargados al sistema",
+                    identifier,
+                    "ELIMINAR_FILA",
+                )
 
         if not row.get("contrasena", "").strip() and identifier:
             _set_value(row, "contrasena", identifier, index, "default_password_from_identifier", corrections)
@@ -484,14 +520,28 @@ def _validate_usuarios(
 
         regional = normalize_key(row.get("regional"))
         if regional and regional not in catalogs.regionales:
-            _add_issue(issues, index, "regional", "error", "INVALID_REGIONAL", "Regional no parametrizada", row.get("regional"))
+            _add_issue(issues, index, "regional", "error", "INVALID_REGIONAL", "Regional (ID) no parametrizada", row.get("regional"))
 
         nit = normalize_key(row.get("compania (nit)"))
         if nit and nit not in catalogs.companias_nit:
             _add_issue(issues, index, "compania (nit)", "error", "INVALID_NIT", "NIT no parametrizado", row.get("compania (nit)"))
 
 
-def _validate_plan_padrino(rows: list[dict[str, str]], issues: list[ValidationIssue]) -> None:
+def _validate_plan_padrino(rows: list[dict[str, str]], catalogs: Catalogs, issues: list[ValidationIssue]) -> None:
+    if catalogs.existing_tecnicos_snapshot_date:
+        _add_issue(
+            issues,
+            1,
+            "tecnicos_exportados",
+            "warning",
+            "EXTERNAL_PLAN_PADRINO_SNAPSHOT",
+            (
+                "La validación de supervisor/técnico en Plan Padrino usa snapshot con fecha "
+                f"{catalogs.existing_tecnicos_snapshot_date}. "
+                "Registros actualizados posteriormente podrían no detectarse."
+            ),
+        )
+
     for index, row in enumerate(rows, start=2):
         padrino = row.get("padrino identificacion", "").strip()
         tecnico = row.get("tecnico identificacion", "").strip()
@@ -503,3 +553,28 @@ def _validate_plan_padrino(rows: list[dict[str, str]], issues: list[ValidationIs
             _add_issue(issues, index, "tecnico identificacion", "error", "REQUIRED", "Técnico identificación es obligatorio")
         if activo not in {"0", "1"}:
             _add_issue(issues, index, "activo", "error", "INVALID_ACTIVE", "Activo debe ser 1 o 0", activo)
+
+        padrino_norm = _normalize_identifier(padrino) if padrino else ""
+        tecnico_norm = _normalize_identifier(tecnico) if tecnico else ""
+
+        if padrino and padrino_norm not in catalogs.existing_tecnicos_ids:
+            _add_issue(
+                issues,
+                index,
+                "padrino identificacion",
+                "error",
+                "SUPERVISOR_NOT_FOUND",
+                "Supervisor no existe en técnicos exportados",
+                padrino,
+            )
+
+        if tecnico and tecnico_norm not in catalogs.existing_tecnicos_ids:
+            _add_issue(
+                issues,
+                index,
+                "tecnico identificacion",
+                "error",
+                "TECHNICIAN_NOT_FOUND",
+                "Técnico no existe en técnicos exportados",
+                tecnico,
+            )

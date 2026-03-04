@@ -14,7 +14,7 @@ def _catalogs() -> Catalogs:
         ciudad_to_base={"MEDELLIN": "ITAGUI", "APARTADO": "ITAGUI", "IBAGUE": "TOLIMA"},
         ciudad_to_regional={"MEDELLIN": "R2 NORORIENTE"},
         bases={"ITAGUI", "TOLIMA"},
-        regionales={"R2 NORORIENTE", "R1 COSTA"},
+        regionales={"R2", "R1"},
         companias_nit={"900123456-7"},
     )
 
@@ -29,9 +29,10 @@ def _catalogs_with_existing_tecnicos() -> Catalogs:
         ciudad_to_base={"MEDELLIN": "ITAGUI", "APARTADO": "ITAGUI", "IBAGUE": "TOLIMA"},
         ciudad_to_regional={"MEDELLIN": "R2 NORORIENTE"},
         bases={"ITAGUI", "TOLIMA"},
-        regionales={"R2 NORORIENTE", "R1 COSTA"},
+        regionales={"R2", "R1"},
         companias_nit={"900123456-7"},
-        existing_tecnicos_ids={"123456"},
+        existing_tecnicos_ids={"123456", "777777"},
+        existing_tecnicos_emails={"juan@mail.com"},
         existing_tecnicos_name_email={("JUAN PEREZ", "juan@mail.com")},
         existing_tecnicos_name_phone={("ANA GOMEZ", "3001234567")},
         existing_tecnicos_snapshot_date="2026-03-01 09:30",
@@ -54,15 +55,44 @@ def test_tecnicos_duplicate_email_error() -> None:
 
 
 def test_usuarios_invalid_role_error() -> None:
-    content = "nombre completo;email;identificación;celular;contraseña;rol de usuario;regional;compañía (nit)\nUser Uno;u1@mail.com;100;; ;NoExiste;R2 NORORIENTE;900123456-7\n".encode("utf-8")
+    content = "nombre completo;email;identificación;celular;contraseña;rol de usuario;regional;compañía (nit)\nUser Uno;u1@mail.com;100;; ;NoExiste;R2;900123456-7\n".encode("utf-8")
     result = validate_csv("usuarios", content, _catalogs())
     assert any(issue.code == "INVALID_ROLE" for issue in result.issues)
+
+
+def test_usuarios_invalid_regional_id_error() -> None:
+    content = "nombre completo;email;identificación;celular;contraseña;rol de usuario;regional;compañía (nit)\nUser Uno;u1@mail.com;100;; ;TECNICO;R2 NORORIENTE;900123456-7\n".encode("utf-8")
+    result = validate_csv("usuarios", content, _catalogs())
+    assert any(issue.code == "INVALID_REGIONAL" for issue in result.issues)
+
+
+def test_usuarios_warn_duplicate_against_existing_by_id_and_email() -> None:
+    content = "nombre completo;email;identificación;celular;contraseña;rol de usuario;regional;compañía (nit)\nUser Uno;juan@mail.com;123456;3001234567;123456;TECNICO;R2;900123456-7\n".encode("utf-8")
+    result = validate_csv("usuarios", content, _catalogs_with_existing_tecnicos())
+    assert any(issue.code == "ALREADY_LOADED_USER_DUPLICATE_ID" for issue in result.issues)
+    assert any(issue.code == "ALREADY_LOADED_USER_DUPLICATE_EMAIL" for issue in result.issues)
+    assert any(issue.code == "EXTERNAL_USERS_SNAPSHOT" for issue in result.issues)
 
 
 def test_plan_padrino_invalid_activo() -> None:
     content = "Padrino Identificación,Tecnico Identificación,Activo\n100,200,2\n".encode("utf-8")
     result = validate_csv("plan_padrino", content, _catalogs())
     assert any(issue.code == "INVALID_ACTIVE" for issue in result.issues)
+
+
+def test_plan_padrino_requires_supervisor_and_technician_existing() -> None:
+    content = "Padrino Identificación,Tecnico Identificación,Activo\n123456,999999,1\n".encode("utf-8")
+    result = validate_csv("plan_padrino", content, _catalogs_with_existing_tecnicos())
+    assert any(issue.code == "TECHNICIAN_NOT_FOUND" for issue in result.issues)
+    assert not any(issue.code == "SUPERVISOR_NOT_FOUND" for issue in result.issues)
+
+
+def test_plan_padrino_accepts_existing_supervisor_and_technician() -> None:
+    content = "Padrino Identificación,Tecnico Identificación,Activo\n123456,777777,1\n".encode("utf-8")
+    result = validate_csv("plan_padrino", content, _catalogs_with_existing_tecnicos())
+    assert not any(issue.code == "SUPERVISOR_NOT_FOUND" for issue in result.issues)
+    assert not any(issue.code == "TECHNICIAN_NOT_FOUND" for issue in result.issues)
+    assert any(issue.code == "EXTERNAL_PLAN_PADRINO_SNAPSHOT" for issue in result.issues)
 
 
 def test_missing_column_error() -> None:

@@ -23,6 +23,7 @@ class Catalogs:
         regionales: set[str],
         companias_nit: set[str],
         existing_tecnicos_ids: set[str] | None = None,
+        existing_tecnicos_emails: set[str] | None = None,
         existing_tecnicos_name_email: set[tuple[str, str]] | None = None,
         existing_tecnicos_name_phone: set[tuple[str, str]] | None = None,
         existing_tecnicos_snapshot_date: str | None = None,
@@ -38,6 +39,7 @@ class Catalogs:
         self.regionales = regionales
         self.companias_nit = companias_nit
         self.existing_tecnicos_ids = existing_tecnicos_ids or set()
+        self.existing_tecnicos_emails = existing_tecnicos_emails or set()
         self.existing_tecnicos_name_email = existing_tecnicos_name_email or set()
         self.existing_tecnicos_name_phone = existing_tecnicos_name_phone or set()
         self.existing_tecnicos_snapshot_date = existing_tecnicos_snapshot_date
@@ -71,14 +73,15 @@ def _parse_snapshot_date(value: str) -> datetime | None:
     return None
 
 
-def _load_existing_tecnicos(csv_path: Path) -> tuple[set[str], set[tuple[str, str]], set[tuple[str, str]], str | None]:
+def _load_existing_tecnicos(csv_path: Path) -> tuple[set[str], set[str], set[tuple[str, str]], set[tuple[str, str]], str | None]:
     existing_ids: set[str] = set()
+    existing_emails: set[str] = set()
     existing_name_email: set[tuple[str, str]] = set()
     existing_name_phone: set[tuple[str, str]] = set()
     latest_snapshot: datetime | None = None
 
     if not csv_path.exists():
-        return existing_ids, existing_name_email, existing_name_phone, None
+        return existing_ids, existing_emails, existing_name_email, existing_name_phone, None
 
     with csv_path.open("r", encoding="utf-8-sig", newline="") as file:
         reader = csv.DictReader(file)
@@ -98,6 +101,8 @@ def _load_existing_tecnicos(csv_path: Path) -> tuple[set[str], set[tuple[str, st
 
             if identifier:
                 existing_ids.add(identifier)
+            if email:
+                existing_emails.add(email)
             if full_name and email:
                 existing_name_email.add((full_name, email))
             if full_name and phone:
@@ -109,7 +114,7 @@ def _load_existing_tecnicos(csv_path: Path) -> tuple[set[str], set[tuple[str, st
                     latest_snapshot = parsed
 
     snapshot_text = latest_snapshot.strftime("%Y-%m-%d %H:%M") if latest_snapshot else None
-    return existing_ids, existing_name_email, existing_name_phone, snapshot_text
+    return existing_ids, existing_emails, existing_name_email, existing_name_phone, snapshot_text
 
 
 def load_catalogs_from_excel(excel_path: str | Path) -> Catalogs:
@@ -127,6 +132,7 @@ def load_catalogs_from_excel(excel_path: str | Path) -> Catalogs:
     regionales: set[str] = set()
     companias_nit: set[str] = set()
     existing_tecnicos_ids: set[str] = set()
+    existing_tecnicos_emails: set[str] = set()
     existing_tecnicos_name_email: set[tuple[str, str]] = set()
     existing_tecnicos_name_phone: set[tuple[str, str]] = set()
     existing_tecnicos_snapshot_date: str | None = None
@@ -134,6 +140,7 @@ def load_catalogs_from_excel(excel_path: str | Path) -> Catalogs:
     tecnicos_export_path = excel_path.parent / "tecnicos_exportados.csv"
     (
         existing_tecnicos_ids,
+        existing_tecnicos_emails,
         existing_tecnicos_name_email,
         existing_tecnicos_name_phone,
         existing_tecnicos_snapshot_date,
@@ -189,7 +196,9 @@ def load_catalogs_from_excel(excel_path: str | Path) -> Catalogs:
     if "Regionales" in workbook.sheetnames:
         sheet = workbook["Regionales"]
         for row in sheet.iter_rows(min_row=2, values_only=True):
-            regional = normalize_key(_safe_text(row[1] if len(row) > 1 else None))
+            regional_id = normalize_key(_safe_text(row[0] if len(row) > 0 else None))
+            regional_name = normalize_key(_safe_text(row[1] if len(row) > 1 else None))
+            regional = regional_id or regional_name
             if regional:
                 regionales.add(regional)
 
@@ -218,6 +227,7 @@ def load_catalogs_from_excel(excel_path: str | Path) -> Catalogs:
         regionales=regionales,
         companias_nit=companias_nit,
         existing_tecnicos_ids=existing_tecnicos_ids,
+        existing_tecnicos_emails=existing_tecnicos_emails,
         existing_tecnicos_name_email=existing_tecnicos_name_email,
         existing_tecnicos_name_phone=existing_tecnicos_name_phone,
         existing_tecnicos_snapshot_date=existing_tecnicos_snapshot_date,
