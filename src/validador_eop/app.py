@@ -91,7 +91,7 @@ def home() -> str:
 <head>
   <meta charset=\"UTF-8\" />
   <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\" />
-  <title>Validador EOP · Wizard</title>
+  <title>Validador EOP</title>
   <style>
     :root {
       --brand: #DF3346;
@@ -114,7 +114,7 @@ def home() -> str:
     .card { background: white; border: 1px solid var(--line); border-radius: 8px; padding: 22px; }
     .subtitle { color: var(--muted); margin-top: 4px; }
     .template-list { margin-top: 14px; display: flex; flex-direction: column; gap: 10px; }
-    .template-option { border: 1px solid var(--line); border-radius: 12px; background: #F9FAFB; padding: 14px 16px; cursor: pointer; }
+    .template-option { border: 1px solid var(--line); border-radius: 12px; background: #F9FAFB; padding: 14px 16px; cursor: pointer; width: 100%; text-align: left; }
     .template-option.active { border-color: var(--brand); background: var(--soft); color: #B42318; font-weight: 600; }
     .actions { margin-top: 14px; display: flex; justify-content: space-between; gap: 10px; }
     .btn { border: 1px solid var(--line); background: white; color: #344054; border-radius: 8px; padding: 9px 14px; cursor: pointer; font-weight: 600; }
@@ -183,12 +183,11 @@ def home() -> str:
 </head>
 <body>
   <div class=\"topbar\">
-    <div class=\"brand\">Excelencia OTC</div>
+    <div class=\"brand\">Excelencia OTC - Validador EOP</div>
     <div class=\"admin\">Admin General</div>
   </div>
 
   <div class=\"page\">
-    <h1>Validador EOP · Wizard simple</h1>
     <div class=\"steps\">
       <div id=\"step-pill-1\" class=\"pill active\">1. Plantilla + Carga</div>
       <div id=\"step-pill-2\" class=\"pill\">2. Resultado</div>
@@ -198,9 +197,9 @@ def home() -> str:
       <div id=\"step1-title\" style=\"font-size: 24px; font-weight: 600;\">Paso 1: Elige la plantilla y carga el archivo</div>
       <div class="subtitle">El sistema recibe cualquier formato y lo convierte a CSV para validar</div>
       <div class=\"template-list\">
-          <div class="template-option" data-template="tecnicos" onclick="setTemplate('tecnicos')">Plantilla Técnicos (recomendada)</div>
-          <div class="template-option" data-template="usuarios" onclick="setTemplate('usuarios')">Plantilla Usuarios</div>
-          <div class="template-option" data-template="plan_padrino" onclick="setTemplate('plan_padrino')">Plantilla Plan Padrino</div>
+            <button type="button" class="template-option" data-template="tecnicos" onclick="window.setTemplate && window.setTemplate('tecnicos')">Plantilla Técnicos (recomendada)</button>
+            <button type="button" class="template-option" data-template="usuarios" onclick="window.setTemplate && window.setTemplate('usuarios')">Plantilla Usuarios</button>
+            <button type="button" class="template-option" data-template="plan_padrino" onclick="window.setTemplate && window.setTemplate('plan_padrino')">Plantilla Plan Padrino</button>
       </div>
       <div id=\"dropzone\" class=\"dropzone\">
         <div class=\"drop-title\">Arrastra y suelta tu archivo aquí</div>
@@ -229,14 +228,19 @@ def home() -> str:
         <button class=\"tab-btn active\" data-tab=\"C\">C. Corrección manual</button>
       </div>
 
+      <div id=\"auto-correction-banner\" class=\"panel warn hidden\" style=\"margin-top:10px;\">
+        <div style=\"font-weight: 600; color: #B42318;\">Se aplicaron correcciones automáticas seguras</div>
+        <div id=\"panel-b-text\" style=\"margin-top: 4px; color: #912018;\">Listo para descargar CSV.</div>
+        <div id=\"panel-b-summary\" style=\"margin-top: 10px;\"></div>
+      </div>
+
       <div id=\"panel-a\" class=\"panel ok hidden\">
         <div style=\"font-weight: 600; color: #027A48;\">Archivo validado sin errores críticos.</div>
         <div style=\"margin-top: 4px; color: #067647;\">Puedes descargar el CSV corregido final.</div>
       </div>
 
       <div id=\"panel-b\" class=\"panel warn hidden\">
-        <div style=\"font-weight: 600; color: #B42318;\">Se aplicaron correcciones automáticas seguras.</div>
-        <div id=\"panel-b-text\" style=\"margin-top: 4px; color: #912018;\">Listo para descargar CSV.</div>
+        <div style=\"color: #912018;\">Todas las correcciones fueron automáticas. Puedes descargar el CSV corregido.</div>
       </div>
 
       <div id=\"panel-c\" class=\"panel\">
@@ -279,7 +283,7 @@ def home() -> str:
 
       <div class=\"actions\" style=\"margin-top: 12px;\">
         <button id=\"back-to-1\" class=\"btn\">Volver</button>
-        <button id=\"download-final\" class=\"btn primary\" onclick=\"window.__downloadCsv && window.__downloadCsv()\">Descargar CSV corregido</button>
+        <button id=\"download-final\" class=\"btn primary\">Descargar CSV corregido</button>
       </div>
     </div>
   </div>
@@ -447,6 +451,31 @@ def home() -> str:
       return lines.join('\\n');
     }
 
+    const exportHeaderMapByTemplate = {
+      usuarios: {
+        'nombre completo': 'Nombre Completo',
+        'email': 'Email',
+        'identificacion': 'Identificación',
+        'celular': 'Celular',
+        'contrasena': 'Contraseña',
+        'rol de usuario': 'Rol de Usuario',
+        'regional': 'Regional',
+        'compania (nit)': 'Compañía (NIT)',
+      },
+    };
+
+    function buildCsvForDownload(template, headers, rows) {
+      const sep = ',';
+      const headerMap = exportHeaderMapByTemplate[template] || {};
+      const exportHeaders = headers.map((header) => headerMap[normalizeCatalogValue(header).toLowerCase()] || headerMap[header] || header);
+      const lines = [];
+      lines.push(exportHeaders.map((header) => escapeCsv(header, sep)).join(sep));
+      for (const row of rows) {
+        lines.push(headers.map((header) => escapeCsv(row[header] ?? '', sep)).join(sep));
+      }
+      return lines.join('\\n');
+    }
+
     function applyValidationPayload(payload, resetProgress = false) {
       state.validation = payload;
       state.correctionOptions = payload.correction_options || {};
@@ -479,6 +508,86 @@ def home() -> str:
 
       document.getElementById('panel-b-text').textContent =
         `Correcciones automáticas aplicadas: ${payload.summary.correction_count}.`;
+
+      try {
+        const corrs = payload.corrections || [];
+        renderAutoCorrectionSummary(corrs);
+      } catch (err) {
+        const s = document.getElementById('panel-b-summary');
+        if (s) s.innerHTML = '<div style="color:red;font-weight:700;">ERROR render: ' + String(err) + '</div>';
+      }
+    }
+
+    function renderAutoCorrectionSummary(corrections) {
+      const container = document.getElementById('panel-b-summary');
+      if (!container) { console.error('panel-b-summary not found'); return; }
+      if (!corrections || !corrections.length) {
+        container.innerHTML = '<div style="color:#667085;font-size:12px;">No hay detalle de correcciones disponible (recibidas: ' + (corrections ? corrections.length : 'null') + ')</div>';
+        return;
+      }
+
+      /* --- group by rule --- */
+      const byRule = {};
+      corrections.forEach((c) => {
+        const key = c.rule || 'other';
+        if (!byRule[key]) byRule[key] = [];
+        byRule[key].push(c);
+      });
+
+      const ruleLabels = {
+        normalize_whitespace: 'Espacios normalizados',
+        normalize_case: 'Mayúsculas / minúsculas',
+        catalog_match: 'Coincidencia con catálogo',
+        city_base_correlation: 'Correlación Ciudad → Base',
+        strip_accents: 'Acentos corregidos',
+        company_name_to_nit: 'Nombre de compañía → NIT',
+        map_company_name_to_nit: 'Nombre de compañía → NIT',
+        trim: 'Espacios al inicio/fin',
+      };
+
+      let html = '<div style="font-size:12px;font-weight:700;color:#912018;margin-bottom:6px;">Detalle de correcciones automáticas</div>';
+
+      /* --- KPI pills --- */
+      const ruleKeys = Object.keys(byRule);
+      html += '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px;">';
+      ruleKeys.forEach((rule) => {
+        const label = ruleLabels[rule] || rule;
+        const count = byRule[rule].length;
+        html += `<span style="border:1px solid #FECDCA;border-radius:999px;background:#FFF7F7;padding:4px 10px;font-size:11px;color:#B42318;font-weight:600;">${label}: ${count}</span>`;
+      });
+      html += '</div>';
+
+      /* --- scrollable table --- */
+      html += '<div style="max-height:260px;overflow:auto;border:1px solid #FECACA;border-radius:8px;">';
+      html += '<table style="width:100%;border-collapse:collapse;font-size:11px;">';
+      html += '<thead><tr style="background:#FEF3F2;position:sticky;top:0;">';
+      html += '<th style="padding:6px 8px;text-align:left;color:#912018;border-bottom:1px solid #FECACA;">Fila</th>';
+      html += '<th style="padding:6px 8px;text-align:left;color:#912018;border-bottom:1px solid #FECACA;">Campo</th>';
+      html += '<th style="padding:6px 8px;text-align:left;color:#912018;border-bottom:1px solid #FECACA;">Valor anterior</th>';
+      html += '<th style="padding:6px 8px;text-align:left;color:#912018;border-bottom:1px solid #FECACA;">Valor corregido</th>';
+      html += '<th style="padding:6px 8px;text-align:left;color:#912018;border-bottom:1px solid #FECACA;">Regla</th>';
+      html += '</tr></thead><tbody>';
+
+      corrections.forEach((c) => {
+        const ruleLabel = ruleLabels[c.rule] || c.rule || '';
+        html += '<tr style="border-bottom:1px solid #FEE4E2;">';
+        html += `<td style="padding:5px 8px;">${c.row}</td>`;
+        html += `<td style="padding:5px 8px;font-weight:600;">${esc(c.field)}</td>`;
+        html += `<td style="padding:5px 8px;color:#667085;text-decoration:line-through;">${esc(c.old_value || '')}</td>`;
+        html += `<td style="padding:5px 8px;color:#027A48;font-weight:600;">${esc(c.new_value || '')}</td>`;
+        html += `<td style="padding:5px 8px;color:#7A271A;">${esc(ruleLabel)}</td>`;
+        html += '</tr>';
+      });
+
+      html += '</tbody></table></div>';
+
+      container.innerHTML = html;
+    }
+
+    function esc(text) {
+      const d = document.createElement('div');
+      d.textContent = String(text);
+      return d.innerHTML;
     }
 
     async function revalidateCurrentCsv() {
@@ -732,6 +841,26 @@ def home() -> str:
       return [];
     }
 
+    function getOptionDisplayLabel(field, value) {
+      const fieldKey = normalizeFieldKey(field);
+      const textValue = String(value ?? '');
+      if (textValue === '') {
+        return '(En blanco)';
+      }
+      if (fieldKey !== 'compania_nit') {
+        return textValue;
+      }
+
+      const labelMap = state.correlationMaps?.company_nit_labels || {};
+      const directLabel = labelMap[textValue];
+      if (directLabel) {
+        return String(directLabel);
+      }
+
+      const mappedLabel = findMappedValue(labelMap, textValue);
+      return mappedLabel ? String(mappedLabel) : textValue;
+    }
+
     function escapeCellHtml(value) {
       return String(value ?? '')
         .replace(/&/g, '&amp;')
@@ -877,7 +1006,8 @@ def home() -> str:
             const textValue = String(opt);
             const value = hasCatalogOptions ? textValue : '';
             const selected = value === item.proposed ? ' selected' : '';
-            return `<option value="${value.replace(/"/g, '&quot;')}"${selected}>${textValue}</option>`;
+            const display = hasCatalogOptions ? getOptionDisplayLabel(item.field, textValue) : textValue;
+            return `<option value="${value.replace(/"/g, '&quot;')}"${selected}>${escapeCellHtml(display)}</option>`;
           })
           .join('');
 
@@ -1261,7 +1391,11 @@ def home() -> str:
           const canGroupedCorrection = canMacroCorrect || canGroupedTextCorrect;
           const invalidGroups = canGroupedCorrection ? groupRowsByCurrentInvalidValue(entry) : [];
           const macroOptionsHtml = fieldOptions
-            .map((option) => `<option value="${escapeHtml(String(option))}">${escapeHtml(String(option))}</option>`)
+            .map((option) => {
+              const textValue = String(option);
+              const displayValue = getOptionDisplayLabel(entry.field, textValue);
+              return `<option value="${escapeHtml(textValue)}">${escapeHtml(displayValue)}</option>`;
+            })
             .join('');
           const groupedCorrectionHtml = canGroupedCorrection
             ? invalidGroups.map((group, idx) => {
@@ -1406,6 +1540,9 @@ def home() -> str:
       document.getElementById('panel-a').classList.toggle('hidden', tab !== 'A');
       document.getElementById('panel-b').classList.toggle('hidden', tab !== 'B');
       document.getElementById('panel-c').classList.toggle('hidden', tab !== 'C');
+      const banner = document.getElementById('auto-correction-banner');
+      const hasCorrections = banner && banner.querySelector('#panel-b-summary')?.innerHTML.trim().length > 0;
+      if (banner) banner.classList.toggle('hidden', tab !== 'B' || !hasCorrections);
     }
 
     async function validateFile() {
@@ -1446,7 +1583,8 @@ def home() -> str:
       if (!state.correctedCsv) {
         return;
       }
-      const blob = new Blob([state.correctedCsv], { type: 'text/csv;charset=utf-8;' });
+      const csvForDownload = buildCsvForDownload(state.template, state.headers, state.rows);
+      const blob = new Blob([csvForDownload], { type: 'text/csv;charset=utf-8;' });
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement('a');
       anchor.href = url;
@@ -1464,11 +1602,17 @@ def home() -> str:
         if (!template) return;
         setTemplate(template);
       });
-    }
 
-    document.querySelectorAll('.template-option').forEach((option) => {
-      option.addEventListener('click', () => setTemplate(option.dataset.template));
-    });
+      templateList.addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        const option = event.target.closest('.template-option');
+        if (!option) return;
+        event.preventDefault();
+        const template = option.dataset.template;
+        if (!template) return;
+        setTemplate(template);
+      });
+    }
 
     document.getElementById('back-to-1').addEventListener('click', () => setStep(1));
 
