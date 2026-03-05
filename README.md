@@ -38,6 +38,12 @@ Sistema web tipo wizard para validar plantillas del sistema de Excelencia Operat
 
 Guía completa: `docs/deploy_produccion.md`.
 
+### Variante producción con dominio + HTTPS
+- Stack: `docker-compose.prod.yml` + `nginx` + `certbot`.
+- Variables: copiar `.env.prod.example` a `.env.prod`.
+- Flujo: bootstrap HTTP → emisión de certificado Let's Encrypt → switch a HTTPS.
+- Pasos detallados en `docs/deploy_produccion.md` (sección 10).
+
 ## Notas
 - Catálogos cargados desde `Parametros/Parametrizacion EOP.xlsx`.
 - Envío al sistema EOP disponible vía `/api/submit`.

@@ -1,0 +1,53 @@
+services:
+  validador-eop:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: validador-eop
+    restart: unless-stopped
+    expose:
+      - "8000"
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: validador-eop-nginx
+    restart: unless-stopped
+    depends_on:
+      - validador-eop
+    ports:
+      - "${HOST_PORT_HTTP:-80}:80"
+      - "${HOST_PORT_HTTPS:-443}:443"
+    environment:
+      DOMAIN: ${DOMAIN}
+      NGINX_MODE: ${NGINX_MODE:-http}
+    volumes:
+      - ./deploy/nginx/templates:/etc/nginx/templates:ro
+      - ./certbot/www:/var/www/certbot
+      - ./certbot/conf:/etc/letsencrypt
+    command: >
+      /bin/sh -c "
+      TEMPLATE=/etc/nginx/templates/$${NGINX_MODE}.conf.template;
+      envsubst '$$DOMAIN' < $$TEMPLATE > /etc/nginx/conf.d/default.conf;
+      nginx -g 'daemon off;'
+      "
+
+  certbot:
+    image: certbot/certbot:latest
+    container_name: validador-eop-certbot
+    volumes:
+      - ./certbot/www:/var/www/certbot
+      - ./certbot/conf:/etc/letsencrypt
+    profiles:
+      - certbot
+
+  certbot-renew:
+    image: certbot/certbot:latest
+    container_name: validador-eop-certbot-renew
+    restart: unless-stopped
+    volumes:
+      - ./certbot/www:/var/www/certbot
+      - ./certbot/conf:/etc/letsencrypt
+    entrypoint: /bin/sh
+    command: -c "trap exit TERM; while :; do certbot renew --webroot -w /var/www/certbot; sleep 12h; done"
+    profiles:
+      - renew

@@ -62,3 +62,57 @@ git archive --format=zip --output backup_validador_eop_<tag>.zip <tag>
 - El servicio expone `FastAPI` en `0.0.0.0:8000` dentro del contenedor.
 - Catálogos requeridos: `Parametros/Parametrizacion EOP.xlsx`.
 - Endpoint de salud: `/api/health`.
+
+## 10) Despliegue con dominio + HTTPS (Nginx + Let's Encrypt)
+
+Archivos usados:
+- `docker-compose.prod.yml`
+- `.env.prod.example`
+- `deploy/nginx/templates/http.conf.template`
+- `deploy/nginx/templates/https.conf.template`
+
+### Paso A — Bootstrap HTTP
+```bash
+cp .env.prod.example .env.prod
+```
+Editar `.env.prod`:
+```dotenv
+DOMAIN=tu-dominio.com
+LETSENCRYPT_EMAIL=tu-correo@empresa.com
+HOST_PORT_HTTP=80
+HOST_PORT_HTTPS=443
+NGINX_MODE=http
+```
+
+Levantar app + nginx en HTTP:
+```bash
+docker compose --env-file .env.prod -f docker-compose.prod.yml up -d --build validador-eop nginx
+```
+
+### Paso B — Emitir certificado
+```bash
+docker compose --env-file .env.prod -f docker-compose.prod.yml run --rm certbot \
+	certonly --webroot -w /var/www/certbot \
+	-d $DOMAIN --email $LETSENCRYPT_EMAIL --agree-tos --no-eff-email
+```
+
+### Paso C — Activar HTTPS
+Cambiar en `.env.prod`:
+```dotenv
+NGINX_MODE=https
+```
+
+Recrear nginx:
+```bash
+docker compose --env-file .env.prod -f docker-compose.prod.yml up -d --force-recreate nginx
+```
+
+Verificar:
+```bash
+curl -f https://tu-dominio.com/api/health
+```
+
+### Renovación automática
+```bash
+docker compose --env-file .env.prod -f docker-compose.prod.yml --profile renew up -d certbot-renew
+```
