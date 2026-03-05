@@ -1,0 +1,15 @@
+services:
+  validador-eop:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: validador-eop
+    restart: unless-stopped
+    ports:
+      - "${HOST_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=5)"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 15s

@@ -6,7 +6,7 @@ Sistema web tipo wizard para validar plantillas del sistema de Excelencia Operat
 - Validación de plantillas: `tecnicos`, `usuarios`, `plan_padrino`.
 - Carga de archivos fuente: `csv`, `json`, `xlsx`, `xls`.
 - Conversión automática del archivo fuente a CSV antes de validar.
-- Detección de delimitador CSV (`,` o `;`).
+- Detección de delimitador CSV (`,`, `;`, tab, `|`).
 - Validaciones por tipo, obligatoriedad, unicidad y catálogos.
 - Autocorrecciones seguras con auditoría por campo.
 - Resumen de errores, advertencias y datos sospechosos.
@@ -25,6 +25,18 @@ Sistema web tipo wizard para validar plantillas del sistema de Excelencia Operat
 
 ## Pruebas
 - `pytest -q`
+
+## Despliegue con Docker
+1. Copiar variables de entorno:
+   - `cp .env.example .env`
+2. Construir y levantar:
+   - `docker compose up -d --build`
+3. Verificar salud:
+   - `curl -f http://127.0.0.1:8000/api/health`
+4. Ver logs:
+   - `docker compose logs -f validador-eop`
+
+Guía completa: `docs/deploy_produccion.md`.
 
 ## Notas
 - Catálogos cargados desde `Parametros/Parametrizacion EOP.xlsx`.

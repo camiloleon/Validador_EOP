@@ -1,18 +1,16 @@
 __pycache__/
 *.py[cod]
-*.pyo
-*.pyd
 .pytest_cache/
+.git/
+.gitignore
 .vscode/
-uvicorn*.log
 .venv/
+server_port
 .server_port
 test-results/
 _debug_*.js
 _debug_*.html
 .tmp_*.js
-*.tmp
-*.temp
-Parametros/*.csv
-Parametros/*.xlsx
-!Parametros/Parametrizacion EOP.xlsx
+*.log
+docs/
+tests/
